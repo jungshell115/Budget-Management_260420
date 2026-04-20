@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -17,10 +17,7 @@ ENV/
 .DS_Store
 
 # Build / output
-output/
-
-# 로컬 편집 캐시
-web_edits/
+# output/, web_edits/는 동기화를 위해 추적합니다.
 
 # OS
 Thumbs.db

@@ -16,6 +16,12 @@ if ([string]::IsNullOrWhiteSpace($branch)) {
   exit 1
 }
 
+python "$PSScriptRoot/scripts/prune_sync_data.py" --root "$PSScriptRoot" --keep 1
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "오류: 동기화 데이터 정리에 실패했습니다."
+  exit 1
+}
+
 if ([string]::IsNullOrWhiteSpace($msg)) {
   $msg = "auto sync $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 }

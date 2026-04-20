@@ -14,6 +14,8 @@ if [[ -z "$BRANCH" ]]; then
   exit 1
 fi
 
+python3 "$SCRIPT_DIR/scripts/prune_sync_data.py" --root "$SCRIPT_DIR" --keep 1 || exit 1
+
 git add -A
 if [[ -z "$(git status --porcelain)" ]]; then
   echo "커밋할 변경 없음: 최신 반영 후 push 시도"

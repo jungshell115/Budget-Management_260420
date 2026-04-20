@@ -79,7 +79,9 @@ python web_server.py
 - 현재 스크립트 위치를 기준으로 저장소 경로 인식
 - `git pull --rebase --autostash`로 최신 변경 반영
 - push 전 최신 내역 재동기화
+- push 전 `output/`은 최신 1개 폴더만 유지, `web_edits/`는 해당 결과와 연결된 JSON만 유지
+- 정리된 결과(`output/`, `web_edits/`)도 Git으로 함께 동기화
 
 주의:
 - 동일 폴더에 Git 외 동기화 도구를 함께 쓰면 `sync-conflict` 파일이 생길 수 있습니다.
-- 가능하면 코드 동기화는 Git만 사용하세요.
+- 가능하면 코드/결과 동기화는 Git만 사용하세요.
