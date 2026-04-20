@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Budget Tool Dashboard</title>
+    <link rel="stylesheet" href="./styles.css?v=20260416i" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+    <div class="bg-grid"></div>
+
+    <main class="container">
+      <header class="hero card reveal">
+        <div>
+          <p class="eyebrow">Budget Intelligence</p>
+          <h1>예산 자동 분석 대시보드</h1>
+          <p id="subline">최신 분석 결과를 불러오는 중...</p>
+          <p id="docMeta" class="meta-line">연도/차수 정보를 불러오는 중...</p>
+        </div>
+        <div class="header-actions">
+          <p id="headerRoundMeta" class="header-meta-right">-년 / -</p>
+          <label class="control">
+            연도
+            <select id="yearSelect"></select>
+          </label>
+          <label class="control">
+            구분
+            <select id="budgetTypeSelect">
+              <option value="base">본예산</option>
+              <option value="supp">추경</option>
+            </select>
+          </label>
+          <label class="control">
+            단위
+            <select id="unitSelect">
+              <option value="원">원</option>
+              <option value="천원">천원</option>
+              <option value="백만원">백만원</option>
+              <option value="억원">억원</option>
+            </select>
+          </label>
+          <button id="refreshBtn" class="btn">새로고침</button>
+        </div>
+      </header>
+
+      <nav class="tabs card reveal">
+        <button class="tab-btn active" data-tab="overview">개요</button>
+        <button class="tab-btn" data-tab="income">세입 명세</button>
+        <button class="tab-btn" data-tab="expense">세출 명세</button>
+        <button class="tab-btn" data-tab="entrusted">위탁사업비</button>
+        <button class="tab-btn" data-tab="base">기초 파싱표</button>
+        <button class="tab-btn" data-tab="issues">코드 검증</button>
+      </nav>
+
+      <section class="panel active" data-panel="overview">
+        <section class="metrics">
+          <article class="card metric reveal">
+            <p>사업수익 총계</p>
+            <h2 id="mTotal">-</h2>
+          </article>
+          <article class="card metric reveal">
+            <p>영업수익</p>
+            <h2 id="mOperating">-</h2>
+          </article>
+          <article class="card metric reveal">
+            <p>보조금수익</p>
+            <h2 id="mSubsidy">-</h2>
+          </article>
+          <article class="card metric reveal">
+            <p>출연금수익</p>
+            <h2 id="mContribution">-</h2>
+          </article>
+          <article class="card metric reveal">
+            <p>위탁사업비 합계</p>
+            <h2 id="mEntrusted">-</h2>
+          </article>
+          <article class="card metric reveal">
+            <p>정합성 이슈</p>
+            <h2 id="mIssue">-</h2>
+          </article>
+        </section>
+
+        <section class="grid-2">
+          <article class="card reveal">
+            <h3>상위 사업비 TOP 8</h3>
+            <div class="inline-controls">
+              <label class="control">
+                구분 필터
+                <select id="filterGroup"></select>
+              </label>
+              <label class="control">
+                부서 필터
+                <select id="filterDept"></select>
+              </label>
+              <label class="control">
+                관항 필터
+                <select id="filterGcode"></select>
+              </label>
+            </div>
+            <div id="expenseBars" class="bars"></div>
+          </article>
+          <article class="card reveal">
+            <h3>증감 TOP 8 (본예산 vs 추경)</h3>
+            <div id="changeBars" class="bars"></div>
+          </article>
+        </section>
+
+        <section class="grid-2">
+          <article class="card reveal">
+            <h3>이슈 유형 요약</h3>
+            <div id="issueBadges" class="badges"></div>
+          </article>
+          <article class="card reveal">
+            <h3>분석 요약</h3>
+            <pre id="summaryBox" class="summary"></pre>
+          </article>
+        </section>
+      </section>
+
+      <section class="panel" data-panel="income">
+        <section class="card reveal">
+          <h3>세입예산명세서</h3>
+          <p class="hint">단위/구분 선택에 따라 현재·기정·증감을 계단형으로 표시합니다.</p>
+          <div class="inline-controls">
+            <button id="manualEntryBtn" class="btn">181 수기입력</button>
+          </div>
+          <div class="table-wrap">
+            <table id="incomeTable"></table>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel" data-panel="expense">
+        <section class="card reveal">
+          <h3>세출예산명세서</h3>
+          <p class="hint">총합 → 관항소계 → 목소계 → 세목소계 → 사업 상세 순으로 표시합니다.</p>
+          <div class="table-wrap">
+            <table id="expenseTable"></table>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel" data-panel="entrusted">
+        <section class="card reveal">
+          <h3>위탁사업비 수동 지정</h3>
+          <p class="hint">
+            기본값은 부입니다. 필요한 사업만 여로 바꾼 뒤 재원별 금액을 입력하세요. 실제 보조금이 있는 재원만 표시됩니다.
+          </p>
+          <div class="inline-controls">
+            <button id="entrustedReloadBtn" class="btn btn-ghost">다시 불러오기</button>
+            <button id="entrustedSaveAllBtn" class="btn">일괄저장</button>
+          </div>
+          <div id="entrustedSummary" class="hint"></div>
+          <div class="table-wrap">
+            <table id="entrustedTable"></table>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel" data-panel="issues">
+        <section class="card reveal">
+          <h3>코드 검증 요약 (코드 단위)</h3>
+          <div class="table-wrap">
+            <table id="issueSummaryTable"></table>
+          </div>
+        </section>
+
+        <section class="card reveal">
+          <h3>정합성 리포트 (상세)</h3>
+          <div class="table-wrap">
+            <table id="issueTable"></table>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel" data-panel="base">
+        <section class="card reveal">
+          <h3>본예산_기초 파싱표</h3>
+          <p class="hint">엑셀 파싱값 보정이 필요하면 이 표에서 직접 수정해 저장하세요.</p>
+          <div class="table-wrap">
+            <table id="baseSnapshotTable"></table>
+          </div>
+        </section>
+      </section>
+
+      <div id="toast" class="toast"></div>
+
+      <div id="manualModal" class="modal">
+        <div class="modal-card">
+          <h3>181 코드 수기입력</h3>
+          <p id="manualTarget" class="hint"></p>
+          <label class="control">
+            코드
+            <select id="manualCodeSelect">
+              <option value="181-01">181-01 순세계잉여금</option>
+              <option value="181-02">181-02 보조금사용잔액</option>
+            </select>
+          </label>
+          <label class="control">
+            금액(원)
+            <input id="manualAmountInput" type="text" placeholder="예: 120000000" />
+          </label>
+          <div class="modal-actions">
+            <button id="manualCancelBtn" class="btn btn-ghost">취소</button>
+            <button id="manualSaveBtn" class="btn">저장</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="./main.js?v=20260416i"></script>
+  </body>
+</html>

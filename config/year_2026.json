@@ -1,0 +1,36 @@
+{
+  "reference_pdf": "2026년도 지방출자·출연기관 예산편성지침.pdf",
+  "reference_text_patterns": [
+    "_pdf_59_98.txt",
+    "*예산편성지침*.txt"
+  ],
+  "pdf_page_start": 59,
+  "pdf_page_end": 98,
+  "base_file_patterns": [
+    "*2026년*본예산*from*정*.xlsx",
+    "*본예산*.xlsx"
+  ],
+  "supp_file_patterns": [
+    "*2026년*1차추경*from*정*.xlsx",
+    "*1차추경*.xlsx"
+  ],
+  "prev_file_patterns": [
+    "*2025년*최종*추경*.xlsx",
+    "*2025년*3차추경*.xlsx",
+    "*2025년*추경*.xlsx"
+  ],
+  "prev_sheet_candidates": [
+    "최종추경_기초",
+    "3차추경_기초",
+    "2차추경_기초",
+    "1차추경_기초",
+    "본예산_기초"
+  ],
+  "base_sheet_name": "본예산_기초",
+  "supp_sheet_name": "1차추경_기초",
+  "validation_source_patterns": [
+    "★2026년 본예산.csv",
+    "★*.csv"
+  ],
+  "expense_mapping_file": "expense_mapping_2026.csv"
+}
