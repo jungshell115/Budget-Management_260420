@@ -33,6 +33,11 @@ CITY_KEYS = [
     "홍성",
 ]
 ENTRUSTED_KEYS = ["국비", "도비", *CITY_KEYS]
+EXPENSE_REF_CSV_CANDIDATES = [
+    Path.home() / "Desktop" / "2026 예산" / "★2026년 본예산_세출예산명세.csv",
+    BASE_DIR.parent / "★2026년 본예산_세출예산명세.csv",
+    BASE_DIR / "★2026년 본예산_세출예산명세.csv",
+]
 
 
 def to_int(value: str) -> int:
@@ -88,6 +93,201 @@ def load_edits_with_fallback(current_stamp: str) -> dict:
         if data:
             return data
     return {}
+
+
+def _first_existing_path(paths: list[Path]) -> Path | None:
+    for p in paths:
+        if p.exists():
+            return p
+    return None
+
+
+def load_expense_code_catalog() -> dict[str, dict[str, str]]:
+    """
+    참고 CSV(★2026년 본예산_세출예산명세)에서 코드명을 추출한다.
+    - triple: 3자리 코드(예: 101 인건비)
+    - semok: 세목 코드(예: 101-01 보수)
+    """
+    out = {"triple": {}, "semok": {}}
+    ref_csv = _first_existing_path(EXPENSE_REF_CSV_CANDIDATES)
+    if ref_csv is None:
+        return out
+    def _parse_with_encoding(enc: str) -> bool:
+        try:
+            with ref_csv.open("r", encoding=enc, newline="") as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    for cell in row:
+                        text = str(cell or "").strip()
+                        if not text:
+                            continue
+                        m_semok = re.match(r"^(\d{3}-\d{2})\s+(.+)$", text)
+                        if m_semok:
+                            code, name = m_semok.group(1), m_semok.group(2).strip()
+                            if code not in out["semok"]:
+                                out["semok"][code] = name
+                            continue
+                        m_triple = re.match(r"^(\d{3})\s+(.+)$", text)
+                        if m_triple:
+                            code, name = m_triple.group(1), m_triple.group(2).strip()
+                            if code not in out["triple"]:
+                                out["triple"][code] = name
+            return True
+        except UnicodeDecodeError:
+            return False
+        except OSError:
+            return False
+
+    ok = _parse_with_encoding("utf-8-sig") or _parse_with_encoding("cp949")
+    if not ok:
+        return {"triple": {}, "semok": {}}
+    return out
+
+
+def snapshot_business_order(rows: list[dict[str, str]]) -> list[str]:
+    order: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        biz = (row.get("사업명") or "").strip()
+        if not biz or biz in {"0", "소계"} or biz in seen:
+            continue
+        seen.add(biz)
+        order.append(biz)
+    return order
+
+
+def _scan_numeric_cells(cells: list[str], start_idx: int, need: int = 3) -> list[int]:
+    nums: list[int] = []
+    for i in range(start_idx, len(cells)):
+        n = to_int(cells[i])
+        if n != 0 or re.search(r"\d", str(cells[i] or "")):
+            nums.append(n)
+            if len(nums) >= need:
+                break
+    while len(nums) < need:
+        nums.append(0)
+    return nums
+
+
+def _thousand_to_won_amounts(values: list[int]) -> list[int]:
+    """
+    ★2026년 본예산_세출예산명세 CSV의 세목 행은 기본 단위가 '천원'이므로
+    파싱 시 원 단위로 통일한다.
+    """
+    out: list[int] = []
+    for v in values:
+        n = int(v)
+        # 참고 CSV는 천원 기반 수치가 주로 들어오므로 원으로 변환
+        out.append(n * 1_000)
+    return out
+
+
+def load_expense_reference_details(valid_business_names: set[str]) -> dict[str, list[dict[str, str | int]]]:
+    """
+    ★2026년 본예산_세출예산명세 CSV에서 사업별 세목 상세를 읽는다.
+    출력: {사업명: [{"code","label","current","prior","diff","foundation"}...]}
+    """
+    ref_csv = _first_existing_path(EXPENSE_REF_CSV_CANDIDATES)
+    if ref_csv is None:
+        return {}
+    data: dict[str, list[dict[str, str | int]]] = {}
+    def norm_biz(name: str) -> str:
+        return re.sub(r"\s+", "", str(name or "").replace("(재)", "").replace("재단법인", "")).strip()
+    canon_by_norm = {norm_biz(n): n for n in valid_business_names}
+    current_business = ""
+    current_entry: dict[str, str | int] | None = None
+    def compact_expr(tokens: list[str]) -> str:
+        text = " ".join([t for t in tokens if t]).strip()
+        text = re.sub(r"\s+", " ", text)
+        text = text.replace(" 원", "원").replace(" 명", "명").replace(" 회", "회").replace(" 식", "식")
+        text = text.replace(" 년", "년").replace(" 월", "월").replace(" =", "=").replace("= ", "=")
+        text = text.replace(" X ", " X ")
+        return text
+    try:
+        encodings = ["utf-8-sig", "cp949"]
+        rows: list[list[str]] | None = None
+        for enc in encodings:
+            try:
+                with ref_csv.open("r", encoding=enc, newline="") as f:
+                    rows = list(csv.reader(f))
+                break
+            except UnicodeDecodeError:
+                rows = None
+                continue
+        if rows is None:
+            return {}
+    except OSError:
+        return {}
+
+    def flush_entry():
+        nonlocal current_entry
+        if not current_entry or not current_business:
+            return
+        data.setdefault(current_business, []).append(current_entry)
+        current_entry = None
+
+    for row in rows:
+        cells = [str(c or "").strip() for c in row]
+        if not any(cells):
+            continue
+
+        biz_candidate = ""
+        for c in cells:
+            key = norm_biz(c)
+            if key and key in canon_by_norm:
+                biz_candidate = canon_by_norm[key]
+                break
+        if biz_candidate:
+            flush_entry()
+            current_business = biz_candidate
+
+        semok_match: tuple[str, str] | None = None
+        semok_idx = -1
+        for i, cell in enumerate(cells):
+            m = re.match(r"^(\d{3}-\d{2})\s+(.+)$", cell)
+            if m:
+                semok_match = (m.group(1), m.group(2).strip())
+                semok_idx = i
+                break
+        if semok_match and current_business:
+            flush_entry()
+            current, prior, diff = _thousand_to_won_amounts(_scan_numeric_cells(cells, semok_idx + 1, 3))
+            foundation_parts: list[str] = []
+            for c in cells[semok_idx + 1 :]:
+                if not c:
+                    continue
+                if c in {"원", "명", "회", "식", "년", "월", "X", "=", ":"}:
+                    continue
+                if re.match(r"^[\d,]+$", c):
+                    continue
+                foundation_parts.append(c)
+                break
+            current_entry = {
+                "code": semok_match[0],
+                "label": semok_match[1],
+                "current": current,
+                "prior": prior,
+                "diff": diff,
+                "foundation": foundation_parts[0] if foundation_parts else "",
+            }
+            continue
+
+        if current_entry and any(c == "○" for c in cells):
+            idx = cells.index("○")
+            desc = ""
+            for c in cells[idx + 1 :]:
+                if c:
+                    desc = c
+                    break
+            if desc:
+                old = str(current_entry.get("foundation") or "").strip()
+                tail_tokens = [t for t in cells[idx + 1 :] if t and t != desc]
+                expr = compact_expr(tail_tokens)
+                bullet = f"○ {desc}" if not expr else f"○ {desc} : {expr}"
+                current_entry["foundation"] = bullet if not old else f"{old}\n{bullet}"
+
+    flush_entry()
+    return data
 
 
 def latest_output_dir() -> Path | None:
@@ -607,6 +807,11 @@ def load_dashboard_payload(selected_year: str | None = None) -> dict:
     def short_rows(rows: list[dict[str, str]], limit: int = 20):
         return rows[:limit]
 
+    expense_code_catalog = load_expense_code_catalog()
+    business_order_base = snapshot_business_order(base_snapshot_rows)
+    business_order_supp = snapshot_business_order(supp_snapshot_rows)
+    expense_reference_base = load_expense_reference_details(set(business_order_base))
+
     return {
         "ok": True,
         "latestFolder": latest.name,
@@ -638,6 +843,16 @@ def load_dashboard_payload(selected_year: str | None = None) -> dict:
         "issueSummary": issue_summary,
         "issueByCodeSummary": issue_by_code,
         "filterOptions": filter_options,
+        "customEdits": {
+            "expenseFoundationBase": edits.get("tables", {}).get("expense_foundation_base", {}),
+            "expenseFoundationSupp": edits.get("tables", {}).get("expense_foundation_supp", {}),
+        },
+        "expenseCodeCatalog": expense_code_catalog,
+        "expenseReferenceBase": expense_reference_base,
+        "businessOrder": {
+            "base": business_order_base,
+            "supp": business_order_supp,
+        },
         "tables": {
             "incomeBase": short_rows(income_rows, 200),
             "expenseBase": short_rows(expense_rows, 400),

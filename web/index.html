@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Budget Tool Dashboard</title>
-    <link rel="stylesheet" href="./styles.css?v=20260416i" />
+    <link rel="stylesheet" href="./styles.css?v=20260420j" />
   </head>
   <body>
     <div class="bg-orb orb-a"></div>
@@ -135,7 +135,7 @@
       <section class="panel" data-panel="expense">
         <section class="card reveal">
           <h3>세출예산명세서</h3>
-          <p class="hint">총합 → 관항소계 → 목소계 → 세목소계 → 사업 상세 순으로 표시합니다.</p>
+          <p class="hint">과목/현재예산/기정예산/증감/산출기초만 표시하며, 산출기초는 세목(예: 101-01 보수) 단계에서만 입력할 수 있습니다. 세목 행의 “수정” 버튼에서 단위를 드롭다운(명/회/월/년/식 등)으로 선택해 입력하세요.</p>
           <div class="table-wrap">
             <table id="expenseTable"></table>
           </div>
@@ -208,8 +208,49 @@
           </div>
         </div>
       </div>
+
+      <div id="expenseFoundationModal" class="modal">
+        <div class="modal-card modal-card-wide">
+          <h3>세출 산출기초 폼입력</h3>
+          <p id="expenseFoundationTarget" class="hint"></p>
+          <label class="control">
+            소계 라벨(선택)
+            <input id="expenseFoundationSummaryInput" type="text" placeholder="예: 소계(총 21명)" />
+          </label>
+          <div class="table-wrap">
+            <table id="expenseFoundationFormTable" class="compact-table">
+              <thead>
+                <tr>
+                  <th>내역명</th>
+                  <th>기초금액</th>
+                  <th>금액단위</th>
+                  <th>수량1</th>
+                  <th>단위1</th>
+                  <th>수량2</th>
+                  <th>단위2</th>
+                  <th>계산결과</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="expenseFoundationFormBody"></tbody>
+            </table>
+          </div>
+          <div class="inline-controls">
+            <button id="expenseFoundationAddRowBtn" class="btn btn-ghost">행 추가</button>
+            <button id="expenseFoundationPreviewBtn" class="btn btn-ghost">미리보기</button>
+          </div>
+          <label class="control">
+            미리보기
+            <textarea id="expenseFoundationPreview" rows="5" readonly></textarea>
+          </label>
+          <div class="modal-actions">
+            <button id="expenseFoundationCancelBtn" class="btn btn-ghost">취소</button>
+            <button id="expenseFoundationSaveBtn" class="btn">저장</button>
+          </div>
+        </div>
+      </div>
     </main>
 
-    <script src="./main.js?v=20260416i"></script>
+    <script src="./main.js?v=20260420j"></script>
   </body>
 </html>

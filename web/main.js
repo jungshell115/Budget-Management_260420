@@ -1,4 +1,5 @@
 const won = new Intl.NumberFormat("ko-KR");
+const FOUNDATION_UNIT_OPTIONS = ["", "명", "회", "월", "년", "식", "건", "개"];
 const appState = {
   data: null,
   entrusted: {
@@ -11,6 +12,11 @@ const appState = {
   filterGroup: "",
   filterDept: "",
   filterGcode: "",
+  expenseFoundationEditor: {
+    table: "",
+    rowIndex: -1,
+    subject: "",
+  },
 };
 
 function setText(id, txt) {
@@ -168,19 +174,201 @@ function mapIncomeRowsForView(rows) {
   }));
 }
 
-function mapExpenseRowsForView(rows) {
-  return (rows || []).map((row) => ({
-    _level: Number(row.레벨 ?? 9),
-    구분: row.유형 ?? "",
-    항목: row.표시 ?? "",
-    관항: row.관항 ?? "",
-    목: row.목 ?? "",
-    세목: row.세목 ?? "",
-    현재예산: `${toUnitValue(row["현재예산(원)"], appState.unit)} ${appState.unit}`,
-    기정예산: `${toUnitValue(row["기정예산(원)"], appState.unit)} ${appState.unit}`,
-    증감: `${toUnitValue(row["증감(원)"], appState.unit)} ${appState.unit}`,
-    부서: row.부서 ?? "",
-  }));
+function expenseCodeLabel(code, fallbackType, codeCatalog = null) {
+  const codeText = String(code || "").trim();
+  if (!codeText) return "";
+  const catalog = codeCatalog || {};
+  const semokName = catalog?.semok?.[codeText];
+  if (semokName) return `${codeText} ${semokName}`;
+  const tripleName = catalog?.triple?.[codeText];
+  if (tripleName) return `${codeText} ${tripleName}`;
+  if (fallbackType === "gwan") return `${codeText} 관항`;
+  if (fallbackType === "mok") return `${codeText} 목`;
+  return `${codeText} 세목`;
+}
+
+function expenseCodeSortKey(code) {
+  const text = String(code || "").trim();
+  if (!text) return Number.MAX_SAFE_INTEGER;
+  const m = text.match(/^(\d{3})(?:-(\d{2}))?$/);
+  if (!m) return Number.MAX_SAFE_INTEGER;
+  const head = Number(m[1] || 0);
+  const tail = Number(m[2] || 0);
+  return head * 100 + tail;
+}
+
+function mapExpenseRowsForView(
+  rows,
+  foundationEdits,
+  budgetType,
+  codeCatalog = null,
+  businessOrder = [],
+  referenceBase = {}
+) {
+  const rawRows = rows || [];
+  const orderMap = new Map();
+  (businessOrder || []).forEach((name, idx) => orderMap.set(String(name || "").trim(), idx));
+  const leafRows = rawRows
+    .filter((row) => String(row.유형 || "") === "사업")
+    .map((row, idx) => ({ ...row, _originalIdx: idx }))
+    .sort((a, b) => {
+      const aBiz = String(a.사업명 || a.표시 || "").trim();
+      const bBiz = String(b.사업명 || b.표시 || "").trim();
+      const aOrd = orderMap.has(aBiz) ? orderMap.get(aBiz) : Number.MAX_SAFE_INTEGER;
+      const bOrd = orderMap.has(bBiz) ? orderMap.get(bBiz) : Number.MAX_SAFE_INTEGER;
+      if (aOrd !== bOrd) return aOrd - bOrd;
+      return Number(a._originalIdx || 0) - Number(b._originalIdx || 0);
+    });
+  if (!leafRows.length) return [];
+
+  const groupOrder = [];
+  const groupMap = new Map();
+  const foundationTable = budgetType === "supp" ? "expense_foundation_supp" : "expense_foundation_base";
+  const editMap = foundationEdits || {};
+  let editIndex = 0;
+
+  const makeNode = (level, subject, current, prior, foundation = "", editable = false, saveIdx = null) => ({
+    _level: level,
+    과목: `${"  ".repeat(level)}${subject}`,
+    현재예산: `${toUnitValue(current, appState.unit)} ${appState.unit}`,
+    기정예산: `${toUnitValue(prior, appState.unit)} ${appState.unit}`,
+    증감: `${toUnitValue(current - prior, appState.unit)} ${appState.unit}`,
+    산출기초: foundation,
+    _foundationEditable: editable,
+    _editTable: editable ? foundationTable : "",
+    _editRowIndex: editable ? saveIdx : null,
+  });
+
+  leafRows.forEach((row) => {
+    const groupName = String(row.구분 || "기타").trim() || "기타";
+    const businessName = String(row.사업명 || row.표시 || "미분류 사업").trim();
+    const gwanCode = String(row.관항 || "").trim();
+    const mokCode = String(row.목 || "").trim();
+    const semokCode = String(row.세목 || "").trim();
+    const current = parseIntLike(row["현재예산(원)"]);
+    const prior = parseIntLike(row["기정예산(원)"]);
+    if (!groupMap.has(groupName)) {
+      groupOrder.push(groupName);
+      groupMap.set(groupName, {
+        current: 0,
+        prior: 0,
+        businessOrder: [],
+        businessMap: new Map(),
+      });
+    }
+    const groupNode = groupMap.get(groupName);
+    groupNode.current += current;
+    groupNode.prior += prior;
+
+    if (!groupNode.businessMap.has(businessName)) {
+      groupNode.businessOrder.push(businessName);
+      groupNode.businessMap.set(businessName, {
+        current: 0,
+        prior: 0,
+        lines: [],
+      });
+    }
+    const businessNode = groupNode.businessMap.get(businessName);
+    businessNode.current += current;
+    businessNode.prior += prior;
+    const refLines = budgetType === "base" ? referenceBase?.[businessName] || [] : [];
+    if (refLines.length) {
+      refLines.forEach((refLine) => {
+        const localEditIdx = editIndex;
+        const editedFoundation = editMap?.[String(localEditIdx)]?.산출기초;
+        const refCode = String(refLine.code || semokCode).trim();
+        const refCur = parseIntLike(refLine.current);
+        const refPre = parseIntLike(refLine.prior);
+        const refDiff = parseIntLike(refLine.diff);
+        const safeCur = refCur || (refDiff ? refPre + refDiff : current);
+        const safePre = refPre;
+        businessNode.lines.push({
+          gwanCode: refCode.slice(0, 1) ? `${refCode.slice(0, 1)}00` : gwanCode,
+          mokCode: refCode.slice(0, 3) || mokCode,
+          semokCode: refCode || semokCode,
+          current: safeCur,
+          prior: safePre,
+          foundation: editedFoundation ?? refLine.foundation ?? row.산출기초 ?? "",
+          saveIdx: localEditIdx,
+        });
+        editIndex += 1;
+      });
+    } else {
+      const localEditIdx = editIndex;
+      const editedFoundation = editMap?.[String(localEditIdx)]?.산출기초;
+      businessNode.lines.push({
+        gwanCode,
+        mokCode,
+        semokCode,
+        current,
+        prior,
+        foundation: editedFoundation ?? row.산출기초 ?? "",
+        saveIdx: localEditIdx,
+      });
+      editIndex += 1;
+    }
+  });
+
+  const totalCurrent = groupOrder.reduce((acc, g) => acc + (groupMap.get(g)?.current || 0), 0);
+  const totalPrior = groupOrder.reduce((acc, g) => acc + (groupMap.get(g)?.prior || 0), 0);
+  const viewRows = [makeNode(0, "(재)충남콘텐츠진흥원", totalCurrent, totalPrior)];
+
+  groupOrder.forEach((groupName) => {
+    const groupNode = groupMap.get(groupName);
+    viewRows.push(makeNode(1, groupName, groupNode.current, groupNode.prior));
+
+    groupNode.businessOrder.forEach((businessName) => {
+      const businessNode = groupNode.businessMap.get(businessName);
+      const bizCurrent = businessNode.lines.reduce((acc, x) => acc + parseIntLike(x.current), 0) || businessNode.current;
+      const bizPrior = businessNode.lines.reduce((acc, x) => acc + parseIntLike(x.prior), 0) || businessNode.prior;
+      viewRows.push(makeNode(2, businessName, bizCurrent, bizPrior));
+      const gwanMap = new Map();
+      businessNode.lines.forEach((line) => {
+        const g = String(line.gwanCode || "").trim() || "000";
+        const m = String(line.mokCode || "").trim() || "000";
+        if (!gwanMap.has(g)) gwanMap.set(g, { current: 0, prior: 0, mokMap: new Map() });
+        const gNode = gwanMap.get(g);
+        gNode.current += parseIntLike(line.current);
+        gNode.prior += parseIntLike(line.prior);
+        if (!gNode.mokMap.has(m)) gNode.mokMap.set(m, { current: 0, prior: 0, semoks: [] });
+        const mNode = gNode.mokMap.get(m);
+        mNode.current += parseIntLike(line.current);
+        mNode.prior += parseIntLike(line.prior);
+        mNode.semoks.push(line);
+      });
+
+      const gwanCodes = Array.from(gwanMap.keys()).sort((a, b) => expenseCodeSortKey(a) - expenseCodeSortKey(b));
+      gwanCodes.forEach((gCode) => {
+        const gNode = gwanMap.get(gCode);
+        viewRows.push(
+          makeNode(3, expenseCodeLabel(gCode, "gwan", codeCatalog), gNode.current, gNode.prior)
+        );
+        const mokCodes = Array.from(gNode.mokMap.keys()).sort((a, b) => expenseCodeSortKey(a) - expenseCodeSortKey(b));
+        mokCodes.forEach((mCode) => {
+          const mNode = gNode.mokMap.get(mCode);
+          viewRows.push(
+            makeNode(4, expenseCodeLabel(mCode, "mok", codeCatalog), mNode.current, mNode.prior)
+          );
+          mNode.semoks
+            .sort((a, b) => expenseCodeSortKey(a.semokCode) - expenseCodeSortKey(b.semokCode))
+            .forEach((line) => {
+              viewRows.push(
+                makeNode(
+                  5,
+                  expenseCodeLabel(line.semokCode, "semok", codeCatalog),
+                  line.current,
+                  line.prior,
+                  line.foundation,
+                  /^\d{3}-\d{2}$/.test(String(line.semokCode || "")),
+                  line.saveIdx
+                )
+              );
+            });
+        });
+      });
+    });
+  });
+  return viewRows;
 }
 
 function mapSnapshotRowsForView(rows) {
@@ -340,6 +528,67 @@ function renderFoundationCell(td, value) {
     row.appendChild(labelEl);
     row.appendChild(colonEl);
     row.appendChild(amountEl);
+    td.appendChild(row);
+  });
+}
+
+function stripThousandSuffix(text) {
+  return String(text || "").replace(/\s*\([0-9,]+\s*천원\)\s*/g, "").trim();
+}
+
+function renderExpenseFoundationCell(td, value, editable, onEdit) {
+  const lines = String(value || "")
+    .split("\n")
+    .map((x) => stripThousandSuffix(x).trim())
+    .filter(Boolean);
+  const parsed = lines.map((line) => {
+    const [leftRaw, rightRaw] = line.includes(" : ") ? line.split(" : ", 2) : [line, ""];
+    return { left: leftRaw || "", right: rightRaw || "" };
+  });
+  const buttonRowIdx = parsed.findIndex((x) => String(x.right || "").trim());
+  td.innerHTML = "";
+  if (!parsed.length) {
+    if (editable) {
+      const wrap = document.createElement("div");
+      wrap.className = "expense-foundation-row";
+      const left = document.createElement("span");
+      left.className = "expense-foundation-left";
+      left.textContent = "-";
+      const right = document.createElement("span");
+      right.className = "expense-foundation-right";
+      right.textContent = "";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-mini btn-ghost";
+      btn.textContent = "수정";
+      btn.addEventListener("click", onEdit);
+      wrap.appendChild(left);
+      wrap.appendChild(right);
+      wrap.appendChild(btn);
+      td.appendChild(wrap);
+    }
+    return;
+  }
+
+  parsed.forEach((lineObj, idx) => {
+    const row = document.createElement("div");
+    row.className = "expense-foundation-row";
+    const left = document.createElement("span");
+    left.className = "expense-foundation-left";
+    left.textContent = lineObj.left || "";
+    const right = document.createElement("span");
+    right.className = "expense-foundation-right";
+    right.textContent = lineObj.right || "";
+    row.appendChild(left);
+    row.appendChild(right);
+    if (editable && idx === (buttonRowIdx >= 0 ? buttonRowIdx : 0)) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-ghost expense-foundation-edit-btn";
+      btn.textContent = "수정";
+      btn.addEventListener("click", onEdit);
+      row.appendChild(btn);
+    }
     td.appendChild(row);
   });
 }
@@ -551,6 +800,267 @@ function parseNumberInput(text) {
   return Number(raw) || 0;
 }
 
+function autoFormatExpenseFoundationInput(text) {
+  const src = String(text || "").trim();
+  if (!src.includes(";")) return src;
+  const parts = src.split(";").map((x) => x.trim()).filter(Boolean);
+  if (parts.length < 3) return src;
+  const label = parts[0];
+  const parsed = parts.slice(1).map((seg) => {
+    const m = seg.match(/^([\d,]+)\s*([^\d\s].*)?$/);
+    if (!m) return null;
+    return {
+      value: parseIntLike(m[1]),
+      unit: String(m[2] || "").trim(),
+      raw: seg,
+    };
+  });
+  if (parsed.some((x) => !x)) return src;
+  const factors = parsed.filter((x) => x.value > 0);
+  if (!factors.length) return src;
+  const unitPrice = factors[0];
+  let total = unitPrice.value;
+  factors.slice(1).forEach((f) => {
+    total *= f.value;
+  });
+  const expr = factors
+    .map((f, idx) => `${won.format(f.value)}${f.unit || (idx === 0 ? "원" : "")}`)
+    .join(" X ");
+  return `○ ${label} : ${expr} = ${won.format(total)}원`;
+}
+
+function foundationToWon(amount, unit) {
+  const n = parseIntLike(amount);
+  if (unit === "천원") return n * 1000;
+  return n;
+}
+
+function parseFoundationFactors(exprText) {
+  const expr = String(exprText || "").split("=")[0];
+  return expr
+    .split("X")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((token) => {
+      const m = token.match(/^([\d,]+)\s*(.*)$/);
+      if (!m) return null;
+      return { value: parseIntLike(m[1]), unit: String(m[2] || "").trim() };
+    })
+    .filter(Boolean);
+}
+
+function normalizeFactorUnit(raw) {
+  const u = String(raw || "").trim();
+  if (!u) return "";
+  if (u.includes("천원")) return "천원";
+  if (u.includes("원")) return "원";
+  return u.replace(/^\(|\)$/g, "").trim();
+}
+
+function parseExpenseFoundationTextToFormRows(text) {
+  const lines = String(text || "")
+    .split("\n")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  let summary = "";
+  const rows = [];
+  lines.forEach((line) => {
+    if (!line.startsWith("○")) {
+      if (!summary) summary = line;
+      return;
+    }
+    const [left, rightRaw] = line.includes(" : ") ? line.split(" : ", 2) : line.split(":", 2);
+    const name = left.replace(/^○\s*/, "").trim();
+    const right = String(rightRaw || "").trim();
+    const factors = parseFoundationFactors(right);
+    const base = factors[0] || { value: 0, unit: "원" };
+    const qty = factors.slice(1);
+    rows.push({
+      name,
+      amount: base.value ? String(base.value) : "",
+      amountUnit: normalizeFactorUnit(base.unit) || "원",
+      qty1: qty[0]?.value ? String(qty[0].value) : "",
+      unit1: normalizeFactorUnit(qty[0]?.unit) || "",
+      qty2: qty[1]?.value ? String(qty[1].value) : "",
+      unit2: normalizeFactorUnit(qty[1]?.unit) || "",
+    });
+  });
+  return { summary, rows };
+}
+
+function getFoundationFormRowsFromDom() {
+  return Array.from(document.querySelectorAll("#expenseFoundationFormBody tr")).map((tr) => ({
+    name: tr.querySelector("[data-k='name']")?.value?.trim() || "",
+    amount: tr.querySelector("[data-k='amount']")?.value?.trim() || "",
+    amountUnit: tr.querySelector("[data-k='amountUnit']")?.value || "원",
+    qty1: tr.querySelector("[data-k='qty1']")?.value?.trim() || "",
+    unit1: tr.querySelector("[data-k='unit1']")?.value?.trim() || "",
+    qty2: tr.querySelector("[data-k='qty2']")?.value?.trim() || "",
+    unit2: tr.querySelector("[data-k='unit2']")?.value?.trim() || "",
+  }));
+}
+
+function foundationLineTotalWon(row) {
+  const base = foundationToWon(row.amount, row.amountUnit);
+  const q1 = parseIntLike(row.qty1 || "1") || 1;
+  const q2 = parseIntLike(row.qty2 || "1") || 1;
+  return base * q1 * q2;
+}
+
+function buildExpenseFoundationTextFromRows(summary, rows) {
+  const out = [];
+  const head = String(summary || "").trim();
+  if (head) out.push(head);
+  rows.forEach((r) => {
+    if (!r.name) return;
+    const baseNum = parseIntLike(r.amount);
+    const baseUnit = r.amountUnit || "원";
+    const factors = [`${won.format(baseNum)}${baseUnit}`];
+    if (parseIntLike(r.qty1)) factors.push(`${won.format(parseIntLike(r.qty1))}${r.unit1 || ""}`);
+    if (parseIntLike(r.qty2)) factors.push(`${won.format(parseIntLike(r.qty2))}${r.unit2 || ""}`);
+    const totalWon = foundationLineTotalWon(r);
+    const rhs = `${won.format(totalWon)}원`;
+    out.push(`○ ${r.name} : ${factors.join(" X ")} = ${rhs}`);
+  });
+  return out.join("\n");
+}
+
+function buildFoundationUnitSelect(dataKey, value = "") {
+  const select = document.createElement("select");
+  select.dataset.k = dataKey;
+  FOUNDATION_UNIT_OPTIONS.forEach((u) => {
+    const opt = document.createElement("option");
+    opt.value = u;
+    opt.textContent = u || "-";
+    select.appendChild(opt);
+  });
+  const normalized = normalizeFactorUnit(value);
+  if (normalized && !FOUNDATION_UNIT_OPTIONS.includes(normalized)) {
+    const custom = document.createElement("option");
+    custom.value = normalized;
+    custom.textContent = normalized;
+    select.appendChild(custom);
+  }
+  select.value = normalized || "";
+  select.addEventListener("change", updateExpenseFoundationPreview);
+  return select;
+}
+
+function renderFoundationFormRow(row = {}) {
+  const tbody = document.getElementById("expenseFoundationFormBody");
+  if (!tbody) return;
+  const tr = document.createElement("tr");
+  const fields = [
+    { k: "name", type: "text", val: row.name || "", ph: "예: 일반수용비" },
+    { k: "amount", type: "text", val: row.amount || "", ph: "예: 56890000" },
+  ];
+  fields.forEach((f) => {
+    const td = document.createElement("td");
+    const input = document.createElement("input");
+    input.type = f.type;
+    input.value = f.val;
+    input.placeholder = f.ph;
+    input.dataset.k = f.k;
+    if (f.k === "amount") {
+      input.addEventListener("input", () => {
+        input.value = input.value.replace(/[^\d]/g, "");
+        updateExpenseFoundationPreview();
+      });
+    } else {
+      input.addEventListener("input", updateExpenseFoundationPreview);
+    }
+    td.appendChild(input);
+    tr.appendChild(td);
+  });
+  const tdUnit = document.createElement("td");
+  const sel = document.createElement("select");
+  sel.dataset.k = "amountUnit";
+  sel.innerHTML = "<option value='원'>원</option><option value='천원'>천원</option>";
+  sel.value = row.amountUnit || "원";
+  sel.addEventListener("change", updateExpenseFoundationPreview);
+  tdUnit.appendChild(sel);
+  tr.appendChild(tdUnit);
+
+  ["qty1", "qty2"].forEach((k) => {
+    const td = document.createElement("td");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.dataset.k = k;
+    input.value = row[k] || "";
+    input.placeholder = "수량";
+    input.addEventListener("input", () => {
+      input.value = input.value.replace(/[^\d]/g, "");
+      updateExpenseFoundationPreview();
+    });
+    td.appendChild(input);
+    tr.appendChild(td);
+    const tdUnitSel = document.createElement("td");
+    tdUnitSel.appendChild(buildFoundationUnitSelect(`unit${k.endsWith("1") ? "1" : "2"}`, row[`unit${k.endsWith("1") ? "1" : "2"}`] || ""));
+    tr.appendChild(tdUnitSel);
+  });
+
+  const tdTotal = document.createElement("td");
+  tdTotal.className = "num";
+  tdTotal.dataset.k = "total";
+  tr.appendChild(tdTotal);
+
+  const tdDel = document.createElement("td");
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "btn btn-ghost btn-mini";
+  delBtn.textContent = "삭제";
+  delBtn.addEventListener("click", () => {
+    tr.remove();
+    updateExpenseFoundationPreview();
+  });
+  tdDel.appendChild(delBtn);
+  tr.appendChild(tdDel);
+  tbody.appendChild(tr);
+}
+
+function updateExpenseFoundationPreview() {
+  const summary = document.getElementById("expenseFoundationSummaryInput")?.value || "";
+  const rows = getFoundationFormRowsFromDom();
+  Array.from(document.querySelectorAll("#expenseFoundationFormBody tr")).forEach((tr, idx) => {
+    const totalCell = tr.querySelector("[data-k='total']");
+    if (!totalCell) return;
+    totalCell.textContent = `${won.format(foundationLineTotalWon(rows[idx] || {}))}원`;
+  });
+  const preview = buildExpenseFoundationTextFromRows(summary, rows);
+  const previewEl = document.getElementById("expenseFoundationPreview");
+  if (previewEl) previewEl.value = preview;
+  return preview;
+}
+
+function openExpenseFoundationModal({ table, rowIndex, subject, value }) {
+  appState.expenseFoundationEditor = {
+    table: table || "",
+    rowIndex: Number.isInteger(rowIndex) ? rowIndex : -1,
+    subject: subject || "",
+  };
+  const parsed = parseExpenseFoundationTextToFormRows(value || "");
+  const targetEl = document.getElementById("expenseFoundationTarget");
+  if (targetEl) targetEl.textContent = `대상: ${subject || "-"}`;
+  const sumEl = document.getElementById("expenseFoundationSummaryInput");
+  if (sumEl) sumEl.value = parsed.summary || "";
+  const tbody = document.getElementById("expenseFoundationFormBody");
+  if (tbody) tbody.innerHTML = "";
+  (parsed.rows.length ? parsed.rows : [{}]).forEach((row) => renderFoundationFormRow(row));
+  updateExpenseFoundationPreview();
+  document.getElementById("expenseFoundationModal")?.classList.add("open");
+}
+
+function closeExpenseFoundationModal() {
+  document.getElementById("expenseFoundationModal")?.classList.remove("open");
+}
+
+async function saveExpenseFoundationModal() {
+  const target = appState.expenseFoundationEditor || {};
+  if (!target.table || target.rowIndex < 0) throw new Error("저장 대상 정보가 없습니다.");
+  const preview = updateExpenseFoundationPreview();
+  await saveCellEdit(target.table, target.rowIndex, "산출기초", preview);
+}
+
 function findIncomeRow(rows, codePrefix) {
   return rows.find((r) => String(r.과목 || "").trim().startsWith(`${codePrefix} `));
 }
@@ -625,7 +1135,15 @@ async function saveManualIncomeEntry() {
   }
 }
 
-function renderTable(tableId, rows, tableName = "", editable = false, rowClassFn = null, editableCellFn = null) {
+function renderTable(
+  tableId,
+  rows,
+  tableName = "",
+  editable = false,
+  rowClassFn = null,
+  editableCellFn = null,
+  editTargetFn = null
+) {
   const table = document.getElementById(tableId);
   if (!table) return;
   table.innerHTML = "";
@@ -647,7 +1165,7 @@ function renderTable(tableId, rows, tableName = "", editable = false, rowClassFn
   const tbody = document.createElement("tbody");
   rows.forEach((row, rowIndex) => {
     const tr = document.createElement("tr");
-    if (tableId === "incomeTable" && String(row.산출기초 || "").trim()) {
+    if ((tableId === "incomeTable" || tableId === "expenseTable") && String(row.산출기초 || "").trim()) {
       tr.classList.add("row-note-top");
     }
     if (typeof rowClassFn === "function") {
@@ -661,6 +1179,21 @@ function renderTable(tableId, rows, tableName = "", editable = false, rowClassFn
       if (tableId === "incomeTable" && c === "산출기초") {
         td.classList.add("foundation-note");
         renderFoundationCell(td, value);
+      } else if (tableId === "expenseTable" && c === "산출기초") {
+        td.classList.add("foundation-note");
+        const openEdit = () => {
+          const target =
+            typeof editTargetFn === "function"
+              ? editTargetFn(row, rowIndex, c, tableName)
+              : { table: tableName, rowIndex, column: c };
+          openExpenseFoundationModal({
+            table: target?.table || tableName,
+            rowIndex: Number.isInteger(target?.rowIndex) ? target.rowIndex : rowIndex,
+            subject: row.과목 || "",
+            value: value || "",
+          });
+        };
+        renderExpenseFoundationCell(td, value, Boolean(row._foundationEditable), openEdit);
       } else if (tableId === "baseSnapshotTable" && c === "부서") {
         const deptPill = document.createElement("span");
         deptPill.className = `source-pill ${deptPillClass(value)}`;
@@ -683,10 +1216,19 @@ function renderTable(tableId, rows, tableName = "", editable = false, rowClassFn
         });
         td.addEventListener("blur", async () => {
           const before = td.dataset.before ?? "";
-          const after = td.textContent ?? "";
+          let after = td.textContent ?? "";
+          if (tableId === "expenseTable" && c === "산출기초") {
+            after = autoFormatExpenseFoundationInput(after);
+            td.textContent = after;
+          }
           if (before === after) return;
           try {
-            await saveCellEdit(tableName, rowIndex, c, after);
+            const target =
+              typeof editTargetFn === "function" ? editTargetFn(row, rowIndex, c, tableName) : null;
+            const saveTable = target?.table || tableName;
+            const saveRowIndex = Number.isInteger(target?.rowIndex) ? target.rowIndex : rowIndex;
+            const saveColumn = target?.column || c;
+            await saveCellEdit(saveTable, saveRowIndex, saveColumn, after);
             showToast("수정내용 저장됨");
           } catch (err) {
             td.textContent = before;
@@ -759,16 +1301,44 @@ function renderAll() {
     false,
     incomeRowClassFn
   );
-  const expenseRowsView = mapExpenseRowsForView(currentExpenseRows());
+  const foundationEdits =
+    appState.budgetType === "supp"
+      ? data.customEdits?.expenseFoundationSupp || {}
+      : data.customEdits?.expenseFoundationBase || {};
+  const expenseCodeCatalog = data.expenseCodeCatalog || { triple: {}, semok: {} };
+  const expenseBusinessOrder =
+    appState.budgetType === "supp" ? data.businessOrder?.supp || [] : data.businessOrder?.base || [];
+  const expenseRowsView = mapExpenseRowsForView(
+    currentExpenseRows(),
+    foundationEdits,
+    appState.budgetType,
+    expenseCodeCatalog,
+    expenseBusinessOrder,
+    data.expenseReferenceBase || {}
+  );
   const expenseRowClassFn = (row) => {
     const lv = Number(row._level);
     if (lv === 0) return "row-lv0";
     if (lv === 1) return "row-lv1";
     if (lv === 2) return "row-lv2";
     if (lv === 3) return "row-lv3";
+    if (lv === 4) return "row-lv4";
+    if (lv === 5) return "row-lv5";
     return "";
   };
-  renderTable("expenseTable", expenseRowsView, "", false, expenseRowClassFn);
+  renderTable(
+    "expenseTable",
+    expenseRowsView,
+    "",
+    false,
+    expenseRowClassFn,
+    () => false,
+    (row, rowIndex, col, fallbackTable) => ({
+      table: row._editTable || fallbackTable,
+      rowIndex: Number.isInteger(row._editRowIndex) ? row._editRowIndex : rowIndex,
+      column: col,
+    })
+  );
   renderTable("baseSnapshotTable", mapSnapshotRowsForView(currentSnapshotRows()), appState.budgetType === "supp" ? "snapshot_supp" : "snapshot_base", true);
   renderTable("issueSummaryTable", data.tables.issuesByCode || [], "", false);
   renderTable("issueTable", data.tables.issues || [], "issues", true);
@@ -966,6 +1536,22 @@ document.getElementById("manualSaveBtn")?.addEventListener("click", async () => 
     showToast("수기입력 반영 완료");
   } catch (e) {
     showToast(String(e.message || "수기입력 실패"), true);
+  }
+});
+document.getElementById("expenseFoundationAddRowBtn")?.addEventListener("click", () => {
+  renderFoundationFormRow({});
+  updateExpenseFoundationPreview();
+});
+document.getElementById("expenseFoundationPreviewBtn")?.addEventListener("click", updateExpenseFoundationPreview);
+document.getElementById("expenseFoundationCancelBtn")?.addEventListener("click", closeExpenseFoundationModal);
+document.getElementById("expenseFoundationSaveBtn")?.addEventListener("click", async () => {
+  try {
+    await saveExpenseFoundationModal();
+    closeExpenseFoundationModal();
+    await loadDashboard();
+    showToast("세출 산출기초 저장 완료");
+  } catch (e) {
+    showToast(String(e.message || "세출 산출기초 저장 실패"), true);
   }
 });
 initTabs();
