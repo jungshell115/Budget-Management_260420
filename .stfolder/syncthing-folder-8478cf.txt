@@ -1,0 +1,5 @@
+# This directory is a Syncthing folder marker.
+# Do not delete.
+
+folderID: budget-tool
+created: 2026-04-20T13:28:41+09:00
