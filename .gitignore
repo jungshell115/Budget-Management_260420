@@ -1,0 +1,29 @@
+@'
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Build / output (필요 시 주석 해제)
+# output/
+# *.csv
+
+# 로컬 편집 캐시 — 팀 공유 시 이 블록 제거
+# web_edits/
+
+# OS
+Thumbs.db
+'@ | Set-Content -Encoding UTF8 .gitignore
