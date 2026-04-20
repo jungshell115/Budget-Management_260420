@@ -1,13 +1,10 @@
 @echo off
 setlocal
-set /p MSG=?? ??? ??(??? ??): 
-
+set /p MSG=Commit message (Enter for auto): 
 if "%MSG%"=="" (
-  powershell -ExecutionPolicy Bypass -File "C:\Users\user\Desktop\2026 ??\budget_tool\sync-push.ps1"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0sync-push.ps1"
 ) else (
-  powershell -ExecutionPolicy Bypass -File "C:\Users\user\Desktop\2026 ??\budget_tool\sync-push.ps1" -msg "%MSG%"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0sync-push.ps1" -msg "%MSG%"
 )
-
 echo.
-echo ??. ?? ?? ??? ?????.
-pause > nul
+pause

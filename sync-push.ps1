@@ -1,11 +1,18 @@
-﻿param([string]$msg = "auto sync $(Get-Date -Format ''yyyy-MM-dd HH:mm'')")
-cd "C:\Users\user\Desktop\2026 예산\budget_tool"
-git add .
+﻿param([string]$msg)
+
+Set-Location -LiteralPath $PSScriptRoot
+
+if ([string]::IsNullOrWhiteSpace($msg)) {
+  $msg = "auto sync $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+}
+
+git add -A
 $status = git status --porcelain
+
 if ([string]::IsNullOrWhiteSpace($status)) {
   Write-Host "커밋할 변경 없음"
-} else {
-  git commit -m $msg
-  git push
+  exit 0
 }
-Read-Host "완료(올리기). 엔터 누르면 종료"
+
+git commit -m $msg
+git push
