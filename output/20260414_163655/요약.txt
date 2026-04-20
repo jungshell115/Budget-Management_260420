@@ -1,9 +1,0 @@
-예산 자동 분석 결과
-- 작업폴더: C:\Users\user\Desktop\2026 예산
-- 본예산 파일: 2026년 본예산 from 정.xlsx
-- 추경 파일: 2026년 1차추경 from 정.xlsx
-- 출력 폴더: C:\Users\user\Desktop\2026 예산\budget_tool\output\20260414_163655
-- PDF 코드셋: lvl1=7, lvl2=205, lvl3=234
-- 코드검증 대상 코드 수: 49
-- 코드 검증 이슈: 61
-- 세출 매핑 누락: 0

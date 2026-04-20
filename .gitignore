@@ -1,0 +1,26 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Build / output
+output/
+
+# 로컬 편집 캐시
+web_edits/
+
+# OS
+Thumbs.db
