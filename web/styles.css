@@ -149,6 +149,120 @@ body {
   margin: 8px 0 12px;
 }
 
+.template-builder-top .control input,
+#templateBusinessSearchInput {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(20, 28, 54, 0.8);
+  color: var(--text);
+  padding: 8px 10px;
+  min-width: 220px;
+}
+
+.template-builder-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(260px, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.control-modern {
+  background: linear-gradient(180deg, rgba(20, 34, 74, 0.55), rgba(16, 25, 52, 0.35));
+  border: 1px solid rgba(120, 160, 255, 0.22);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.control-modern input {
+  border: 1px solid rgba(120, 160, 255, 0.26);
+  border-radius: 10px;
+  background: rgba(11, 18, 38, 0.6);
+  color: #e8f0ff;
+  padding: 9px 10px;
+}
+
+.control-modern select {
+  border: 1px solid rgba(120, 160, 255, 0.26);
+  border-radius: 10px;
+  background: rgba(11, 18, 38, 0.6);
+  color: #e8f0ff;
+  padding: 9px 10px;
+}
+
+.template-builder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.template-business-list {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 12px;
+}
+
+.template-new-business-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.template-new-business-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 255, 214, 0.35);
+  background: rgba(123, 255, 214, 0.12);
+  color: #dffef4;
+  font-size: 12px;
+}
+
+.template-new-business-remove {
+  border: 0;
+  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  cursor: pointer;
+  color: #07222a;
+  background: rgba(123, 255, 214, 0.95);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.template-biz-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(30, 44, 85, 0.4);
+  color: #dbe7ff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.template-biz-pill.active {
+  background: linear-gradient(135deg, rgba(106, 162, 255, 0.9), rgba(123, 255, 214, 0.75));
+  color: #04162e;
+  border-color: transparent;
+  font-weight: 700;
+}
+
+#templateBuilderCard {
+  border-color: rgba(106, 162, 255, 0.34);
+}
+
 .btn {
   border: 0;
   background: linear-gradient(135deg, var(--accent), #88b8ff);
@@ -418,11 +532,17 @@ td.foundation-note {
 
 #expenseTable td.foundation-note {
   white-space: normal !important;
+  vertical-align: top !important;
+  position: relative;
+}
+
+#expenseTable td.foundation-note.foundation-editable {
+  padding-right: 44px;
 }
 
 .expense-foundation-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   min-height: 24px;
 }
@@ -433,6 +553,7 @@ td.foundation-note {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 400;
 }
 
 .expense-foundation-right {
@@ -440,15 +561,60 @@ td.foundation-note {
   text-align: right;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  font-weight: 400;
+}
+
+.expense-foundation-right.subtotal-center {
+  min-width: 190px;
+  text-align: center;
+  margin-right: 320px;
+}
+
+.expense-foundation-right-wrap {
+  display: inline-grid;
+  grid-template-columns: 260px 190px;
+  align-items: baseline;
+  column-gap: 8px;
+}
+
+.expense-foundation-lhs {
+  text-align: right;
+}
+
+.expense-foundation-rhs {
+  text-align: right;
 }
 
 .expense-foundation-edit-btn {
-  flex: 0 0 auto;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   padding: 2px 6px !important;
   min-height: 20px;
   line-height: 1.1;
   font-size: 11px;
   border-radius: 6px;
+}
+
+.expense-foundation-verify {
+  margin-top: 4px;
+  text-align: right;
+  font-size: 11px;
+  color: #c7d6f5;
+}
+
+.expense-foundation-verify.ok {
+  color: #9be2b9;
+}
+
+.expense-foundation-verify.warn {
+  color: #ffb6c7;
+}
+
+tr.expense-business-row td {
+  cursor: pointer;
 }
 
 .foundation-text {
@@ -774,6 +940,10 @@ tr.row-lv5 td {
   }
 
   .grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .template-builder-row {
     grid-template-columns: 1fr;
   }
 }

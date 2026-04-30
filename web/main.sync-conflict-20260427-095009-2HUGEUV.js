@@ -1,5 +1,5 @@
 const won = new Intl.NumberFormat("ko-KR");
-const FOUNDATION_UNIT_OPTIONS = ["", "명", "회", "월", "년", "식", "건", "개", "팀"];
+const FOUNDATION_UNIT_OPTIONS = ["", "명", "회", "월", "년", "식", "건", "개"];
 const appState = {
   data: null,
   entrusted: {
@@ -17,15 +17,6 @@ const appState = {
     rowIndex: -1,
     subject: "",
   },
-  templateBuilder: {
-    businesses: [],
-    rounds: [],
-    departments: [],
-    selectedBusinesses: new Set(),
-    newBusinesses: [],
-  },
-  expenseErrorOnly: false,
-  expenseAccordionOpen: {},
 };
 
 function setText(id, txt) {
@@ -230,42 +221,14 @@ function mapExpenseRowsForView(
     });
   if (!leafRows.length) return [];
 
-  const extractFoundationBullets = (text) =>
-    String(text || "")
-      .split("\n")
-      .map((x) => stripThousandSuffix(x).trim())
-      .filter((x) => x.startsWith("○ "));
-  const extractFoundationSummary = (text) =>
-    String(text || "")
-      .split("\n")
-      .map((x) => stripThousandSuffix(x).trim())
-      .find((x) => x && !x.startsWith("○ "));
-  const normalizeSummaryLabel = (label, fallback = "합계") =>
-    String(label || fallback)
-      .replace(/\s+/g, " ")
-      .replace(/소\s*계/g, "소계")
-      .replace(/합\s*계/g, "합계")
-      .trim();
-
   const groupOrder = [];
   const groupMap = new Map();
   const foundationTable = budgetType === "supp" ? "expense_foundation_supp" : "expense_foundation_base";
   const editMap = foundationEdits || {};
   let editIndex = 0;
 
-  const makeNode = (
-    level,
-    subject,
-    current,
-    prior,
-    foundation = "",
-    editable = false,
-    saveIdx = null,
-    extra = {}
-  ) => ({
+  const makeNode = (level, subject, current, prior, foundation = "", editable = false, saveIdx = null) => ({
     _level: level,
-    _currentWon: Number(current || 0),
-    _priorWon: Number(prior || 0),
     과목: `${"  ".repeat(level)}${subject}`,
     현재예산: `${toUnitValue(current, appState.unit)} ${appState.unit}`,
     기정예산: `${toUnitValue(prior, appState.unit)} ${appState.unit}`,
@@ -274,7 +237,6 @@ function mapExpenseRowsForView(
     _foundationEditable: editable,
     _editTable: editable ? foundationTable : "",
     _editRowIndex: editable ? saveIdx : null,
-    ...extra,
   });
 
   leafRows.forEach((row) => {
@@ -309,35 +271,12 @@ function mapExpenseRowsForView(
     const businessNode = groupNode.businessMap.get(businessName);
     businessNode.current += current;
     businessNode.prior += prior;
-    const refLinesRaw = budgetType === "base" ? referenceBase?.[businessName] || [] : [];
-    const refLines = (() => {
-      if (!refLinesRaw.length) return [];
-      const hasSemok = refLinesRaw.some((x) => /^\d{3}-\d{2}$/.test(String(x.code || "").trim()));
-      if (!hasSemok) return refLinesRaw;
-      // 세목 행이 있으면 동일 prefix(예: 101) 집계행만 제외하고,
-      // 다른 목코드(예: 107, 109)는 유지한다.
-      const semokPrefixes = new Set(
-        refLinesRaw
-          .map((x) => String(x.code || "").trim())
-          .filter((code) => /^\d{3}-\d{2}$/.test(code))
-          .map((code) => code.slice(0, 3))
-      );
-      return refLinesRaw.filter((x) => {
-        const code = String(x.code || "").trim();
-        if (/^\d{3}-\d{2}$/.test(code)) return true;
-        if (/^\d{3}$/.test(code) && semokPrefixes.has(code)) return false;
-        return true;
-      });
-    })();
+    const refLines = budgetType === "base" ? referenceBase?.[businessName] || [] : [];
     if (refLines.length) {
       refLines.forEach((refLine) => {
         const localEditIdx = editIndex;
+        const editedFoundation = editMap?.[String(localEditIdx)]?.산출기초;
         const refCode = String(refLine.code || semokCode).trim();
-        const refCodeNum = /^\d{3}$/.test(refCode) ? Number(refCode) : -1;
-        // 100/200/300/... 관항 집계코드는 하위 목/세목 합으로 표시하므로 중복 라인 생성을 막는다.
-        if (refCodeNum >= 0 && refCodeNum % 100 === 0) {
-          return;
-        }
         const refCur = parseIntLike(refLine.current);
         const refPre = parseIntLike(refLine.prior);
         const refDiff = parseIntLike(refLine.diff);
@@ -349,7 +288,7 @@ function mapExpenseRowsForView(
           semokCode: refCode || semokCode,
           current: safeCur,
           prior: safePre,
-          foundation: refLine.foundation ?? row.산출기초 ?? "",
+          foundation: editedFoundation ?? refLine.foundation ?? row.산출기초 ?? "",
           saveIdx: localEditIdx,
         });
         editIndex += 1;
@@ -382,13 +321,7 @@ function mapExpenseRowsForView(
       const businessNode = groupNode.businessMap.get(businessName);
       const bizCurrent = businessNode.lines.reduce((acc, x) => acc + parseIntLike(x.current), 0) || businessNode.current;
       const bizPrior = businessNode.lines.reduce((acc, x) => acc + parseIntLike(x.prior), 0) || businessNode.prior;
-      const bizKey = `${groupName}::${businessName}`;
-      viewRows.push(
-        makeNode(2, businessName, bizCurrent, bizPrior, "", false, null, {
-          _isBusinessHeader: true,
-          _bizKey: bizKey,
-        })
-      );
+      viewRows.push(makeNode(2, businessName, bizCurrent, bizPrior));
       const gwanMap = new Map();
       businessNode.lines.forEach((line) => {
         const g = String(line.gwanCode || "").trim() || "000";
@@ -408,42 +341,15 @@ function mapExpenseRowsForView(
       gwanCodes.forEach((gCode) => {
         const gNode = gwanMap.get(gCode);
         viewRows.push(
-          makeNode(3, expenseCodeLabel(gCode, "gwan", codeCatalog), gNode.current, gNode.prior, "", false, null, {
-            _isBusinessDetail: true,
-            _bizKey: bizKey,
-          })
+          makeNode(3, expenseCodeLabel(gCode, "gwan", codeCatalog), gNode.current, gNode.prior)
         );
         const mokCodes = Array.from(gNode.mokMap.keys()).sort((a, b) => expenseCodeSortKey(a) - expenseCodeSortKey(b));
         mokCodes.forEach((mCode) => {
           const mNode = gNode.mokMap.get(mCode);
-          const mFoundation = [];
-          const realSemoks = mNode.semoks.filter((line) => /^\d{3}-\d{2}$/.test(String(line.semokCode || "")));
-          const directMokLines = mNode.semoks.filter((line) => !/^\d{3}-\d{2}$/.test(String(line.semokCode || "")));
-          const directSummary = directMokLines.map((line) => extractFoundationSummary(line.foundation)).find(Boolean);
-          mFoundation.push(normalizeSummaryLabel(directSummary, "합계"));
-          if (!realSemoks.length) {
-            directMokLines.forEach((line) => {
-              extractFoundationBullets(line.foundation).forEach((bullet) => mFoundation.push(bullet));
-            });
-          }
-          const mokEditable = !realSemoks.length && /^\d{3}$/.test(String(mCode || "")) && !String(mCode).endsWith("00");
-          const mokSaveIdx = mokEditable && directMokLines.length ? directMokLines[0].saveIdx : null;
           viewRows.push(
-            makeNode(
-              4,
-              expenseCodeLabel(mCode, "mok", codeCatalog),
-              mNode.current,
-              mNode.prior,
-              mFoundation.join("\n"),
-              mokEditable,
-              mokSaveIdx,
-              {
-                _isBusinessDetail: true,
-                _bizKey: bizKey,
-              }
-            )
+            makeNode(4, expenseCodeLabel(mCode, "mok", codeCatalog), mNode.current, mNode.prior)
           );
-          realSemoks
+          mNode.semoks
             .sort((a, b) => expenseCodeSortKey(a.semokCode) - expenseCodeSortKey(b.semokCode))
             .forEach((line) => {
               viewRows.push(
@@ -454,11 +360,7 @@ function mapExpenseRowsForView(
                   line.prior,
                   line.foundation,
                   /^\d{3}-\d{2}$/.test(String(line.semokCode || "")),
-                  line.saveIdx,
-                  {
-                    _isBusinessDetail: true,
-                    _bizKey: bizKey,
-                  }
+                  line.saveIdx
                 )
               );
             });
@@ -634,64 +536,18 @@ function stripThousandSuffix(text) {
   return String(text || "").replace(/\s*\([0-9,]+\s*천원\)\s*/g, "").trim();
 }
 
-function parseFoundationFactor(token, isBase = false) {
-  const t = String(token || "").replace(/\s+/g, " ").trim();
-  if (!t) return null;
-  const m = t.match(/^([\d,]+)\s*([^0-9]*)$/);
-  if (!m) return null;
-  const num = parseIntLike(m[1]);
-  let unit = String(m[2] || "").replace(/[()]/g, "").trim();
-  if (!unit && isBase) unit = "원";
-  return { num, unit };
-}
-
-function normalizeFoundationEquation(rightText) {
-  const raw = stripThousandSuffix(rightText);
-  if (!raw || !raw.includes("=")) return null;
-  const leftExpr = raw.split("=")[0].trim();
-  const factorsRaw = leftExpr.split(/\s*[xX]\s*/).map((x) => x.trim()).filter(Boolean);
-  if (!factorsRaw.length) return null;
-  const factors = factorsRaw.map((token, idx) => parseFoundationFactor(token, idx === 0));
-  if (factors.some((x) => !x)) return null;
-
-  const base = factors[0];
-  const baseWon = base.unit === "천원" ? base.num * 1000 : base.num;
-  let totalWon = baseWon;
-  factors.slice(1).forEach((f) => {
-    totalWon *= f.num;
-  });
-
-  const qtyFmt = (n, u) => `${String(n).padStart(2, " ")}${u || ""}`;
-  const leftParts = [`${won.format(baseWon)}원`];
-  factors.slice(1).forEach((f) => leftParts.push(qtyFmt(f.num, f.unit)));
-  return {
-    lhs: leftParts.join(" X "),
-    rhs: `${won.format(totalWon)}원`,
-    totalWon,
-  };
-}
-
-function renderExpenseFoundationCell(td, value, editable, onEdit, expectedWon = null) {
+function renderExpenseFoundationCell(td, value, editable, onEdit) {
   const lines = String(value || "")
     .split("\n")
     .map((x) => stripThousandSuffix(x).trim())
     .filter(Boolean);
   const parsed = lines.map((line) => {
     const [leftRaw, rightRaw] = line.includes(" : ") ? line.split(" : ", 2) : [line, ""];
-    const leftNorm = String(leftRaw || "")
-      .replace(/\s+/g, " ")
-      .replace(/소\s*계/g, "소계")
-      .replace(/합\s*계/g, "합계")
-      .trim();
-    return { left: leftNorm, right: rightRaw || "" };
+    return { left: leftRaw || "", right: rightRaw || "" };
   });
-  const bulletCount = parsed.filter((x) => String(x.left || "").startsWith("○ ")).length;
-  const visibleParsed =
-    bulletCount >= 2
-      ? parsed
-      : parsed.filter((x) => !/소\s*계|합\s*계/.test(String(x.left || "")));
+  const buttonRowIdx = parsed.findIndex((x) => String(x.right || "").trim());
   td.innerHTML = "";
-  if (!visibleParsed.length) {
+  if (!parsed.length) {
     if (editable) {
       const wrap = document.createElement("div");
       wrap.className = "expense-foundation-row";
@@ -701,23 +557,20 @@ function renderExpenseFoundationCell(td, value, editable, onEdit, expectedWon = 
       const right = document.createElement("span");
       right.className = "expense-foundation-right";
       right.textContent = "";
-      wrap.appendChild(left);
-      wrap.appendChild(right);
-      td.appendChild(wrap);
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "btn btn-ghost expense-foundation-edit-btn";
+      btn.className = "btn btn-mini btn-ghost";
       btn.textContent = "수정";
       btn.addEventListener("click", onEdit);
-      td.appendChild(btn);
+      wrap.appendChild(left);
+      wrap.appendChild(right);
+      wrap.appendChild(btn);
+      td.appendChild(wrap);
     }
-    return false;
+    return;
   }
 
-  if (editable) td.classList.add("foundation-editable");
-  else td.classList.remove("foundation-editable");
-  const totals = [];
-  visibleParsed.forEach((lineObj, idx) => {
+  parsed.forEach((lineObj, idx) => {
     const row = document.createElement("div");
     row.className = "expense-foundation-row";
     const left = document.createElement("span");
@@ -725,66 +578,19 @@ function renderExpenseFoundationCell(td, value, editable, onEdit, expectedWon = 
     left.textContent = lineObj.left || "";
     const right = document.createElement("span");
     right.className = "expense-foundation-right";
-    if (lineObj.right) {
-      const isSubtotalLine = /소\s*계|합\s*계/.test(String(lineObj.left || ""));
-      if (isSubtotalLine) {
-        right.textContent = lineObj.right;
-      } else {
-      const eq = normalizeFoundationEquation(lineObj.right);
-      if (eq) {
-        const wrap = document.createElement("span");
-        wrap.className = "expense-foundation-right-wrap";
-        const lhs = document.createElement("span");
-        lhs.className = "expense-foundation-lhs";
-        lhs.textContent = eq.lhs;
-        const rhs = document.createElement("span");
-        rhs.className = "expense-foundation-rhs";
-        rhs.textContent = `= ${eq.rhs}`;
-        wrap.appendChild(lhs);
-        wrap.appendChild(rhs);
-        right.appendChild(wrap);
-        totals.push(eq.totalWon);
-      } else {
-        right.textContent = lineObj.right;
-      }
-      }
-    } else {
-      const isSubtotalLine = /소\s*계|합\s*계/.test(String(lineObj.left || ""));
-      if (isSubtotalLine && Number.isFinite(expectedWon)) {
-        right.classList.add("subtotal-center");
-        right.textContent = `${won.format(Number(expectedWon || 0))}원`;
-      } else {
-        right.textContent = "";
-      }
-    }
+    right.textContent = lineObj.right || "";
     row.appendChild(left);
     row.appendChild(right);
+    if (editable && idx === (buttonRowIdx >= 0 ? buttonRowIdx : 0)) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-ghost expense-foundation-edit-btn";
+      btn.textContent = "수정";
+      btn.addEventListener("click", onEdit);
+      row.appendChild(btn);
+    }
     td.appendChild(row);
   });
-  if (Number.isFinite(expectedWon) && totals.length > 0) {
-    const total = totals.reduce((acc, n) => acc + n, 0);
-    const diff = total - Number(expectedWon || 0);
-    if (diff !== 0) {
-      const verify = document.createElement("div");
-      verify.className = "expense-foundation-verify warn";
-      const sign = diff > 0 ? "+" : "";
-      verify.textContent = `검산: 산식합 ${won.format(total)}원 / 현재예산 ${won.format(
-        Number(expectedWon || 0)
-      )}원 / 차이 ${sign}${won.format(diff)}원`;
-      td.appendChild(verify);
-    }
-  }
-  if (editable) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn btn-ghost expense-foundation-edit-btn";
-    btn.textContent = "수정";
-    btn.addEventListener("click", onEdit);
-    td.appendChild(btn);
-  }
-  const total = totals.length ? totals.reduce((acc, n) => acc + n, 0) : 0;
-  const diff = Number(expectedWon || 0) - total;
-  return totals.length > 0 && diff !== 0;
 }
 
 async function saveCellEdit(tableName, rowIndex, column, value) {
@@ -1357,30 +1163,14 @@ function renderTable(
   thead.appendChild(trHead);
 
   const tbody = document.createElement("tbody");
-  const expenseMetaRows = [];
   rows.forEach((row, rowIndex) => {
     const tr = document.createElement("tr");
-    let hasFoundationError = false;
     if ((tableId === "incomeTable" || tableId === "expenseTable") && String(row.산출기초 || "").trim()) {
       tr.classList.add("row-note-top");
     }
     if (typeof rowClassFn === "function") {
       const extraClass = rowClassFn(row);
       if (extraClass) tr.classList.add(extraClass);
-    }
-    if (tableId === "expenseTable") {
-      if (row._isBusinessHeader) {
-        tr.classList.add("expense-business-row");
-        tr.dataset.bizKey = String(row._bizKey || "");
-        tr.addEventListener("click", () => {
-          const key = String(row._bizKey || "");
-          if (!key) return;
-          appState.expenseAccordionOpen[key] = !appState.expenseAccordionOpen[key];
-          renderAll();
-        });
-      } else if (row._isBusinessDetail) {
-        tr.dataset.bizKey = String(row._bizKey || "");
-      }
     }
     columns.forEach((c) => {
       const td = document.createElement("td");
@@ -1403,13 +1193,7 @@ function renderTable(
             value: value || "",
           });
         };
-        hasFoundationError = renderExpenseFoundationCell(
-          td,
-          value,
-          Boolean(row._foundationEditable),
-          openEdit,
-          Number(row._currentWon || 0)
-        );
+        renderExpenseFoundationCell(td, value, Boolean(row._foundationEditable), openEdit);
       } else if (tableId === "baseSnapshotTable" && c === "부서") {
         const deptPill = document.createElement("span");
         deptPill.className = `source-pill ${deptPillClass(value)}`;
@@ -1454,47 +1238,11 @@ function renderTable(
       }
       tr.appendChild(td);
     });
-    if (hasFoundationError) tr.classList.add("row-foundation-error");
-    if (tableId === "expenseTable") {
-      expenseMetaRows.push({ tr, row, hasFoundationError });
-    }
     tbody.appendChild(tr);
   });
 
-  if (tableId === "expenseTable") {
-    const bizHasError = {};
-    expenseMetaRows.forEach(({ row, hasFoundationError }) => {
-      if (row?._isBusinessDetail && row?._bizKey && hasFoundationError) {
-        bizHasError[row._bizKey] = true;
-      }
-    });
-    expenseMetaRows.forEach(({ tr, row, hasFoundationError }) => {
-      const bizKey = String(row?._bizKey || "");
-      const open = Boolean(appState.expenseAccordionOpen[bizKey]);
-      if (row?._isBusinessHeader) {
-        tr.style.display = appState.expenseErrorOnly && !bizHasError[bizKey] ? "none" : "";
-        return;
-      }
-      if (row?._isBusinessDetail) {
-        const byError = !appState.expenseErrorOnly || hasFoundationError;
-        tr.style.display = open && byError ? "" : "none";
-        return;
-      }
-      tr.style.display = "none";
-    });
-  }
-
   table.appendChild(thead);
   table.appendChild(tbody);
-}
-
-function updateExpenseErrorFilterButton() {
-  const btn = document.getElementById("expenseErrorFilterBtn");
-  const rows = Array.from(document.querySelectorAll("#expenseTable tbody tr"));
-  const hasError = rows.some((tr) => tr.classList.contains("row-foundation-error"));
-  if (!btn) return;
-  btn.style.display = hasError ? "inline-flex" : "none";
-  btn.textContent = appState.expenseErrorOnly ? "전체 보기" : "오류만 보기";
 }
 
 function updateDocMeta() {
@@ -1591,7 +1339,6 @@ function renderAll() {
       column: col,
     })
   );
-  updateExpenseErrorFilterButton();
   renderTable("baseSnapshotTable", mapSnapshotRowsForView(currentSnapshotRows()), appState.budgetType === "supp" ? "snapshot_supp" : "snapshot_base", true);
   renderTable("issueSummaryTable", data.tables.issuesByCode || [], "", false);
   renderTable("issueTable", data.tables.issues || [], "issues", true);
@@ -1634,176 +1381,6 @@ function fillSelect(id, values) {
   });
 }
 
-function setInputValue(id, value) {
-  const el = document.getElementById(id);
-  if (el) el.value = value ?? "";
-}
-
-function parseCommaValues(text) {
-  return String(text || "")
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
-
-function budgetTypeFromRound(roundLabel) {
-  const t = String(roundLabel || "").trim();
-  return t === "본예산" ? "base" : "supp";
-}
-
-function updateTemplateBuilderVisibility() {
-  const card = document.getElementById("templateBuilderCard");
-  const round = String(document.getElementById("templateRoundSelect")?.value || "").trim();
-  if (!card) return;
-  const visible = Boolean(round && round !== "본예산");
-  card.style.display = visible ? "" : "none";
-}
-
-function renderTemplateBusinessList() {
-  const root = document.getElementById("templateBusinessList");
-  const round = String(document.getElementById("templateRoundSelect")?.value || "").trim();
-  const search = String(document.getElementById("templateBusinessSearchInput")?.value || "").trim().toLowerCase();
-  if (!root) return;
-  root.innerHTML = "";
-  if (round === "본예산") {
-    root.innerHTML = "<span class='hint'>본예산은 기존 사업 선택 대상이 없습니다. (신규사업만 입력 가능)</span>";
-    return;
-  }
-  const businesses = appState.templateBuilder.businesses || [];
-  const filtered = search ? businesses.filter((x) => String(x).toLowerCase().includes(search)) : businesses;
-  if (!filtered.length) {
-    root.innerHTML = "<span class='hint'>사업 목록이 없습니다.</span>";
-    return;
-  }
-  filtered.forEach((biz, idx) => {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = `template-biz-pill ${
-      appState.templateBuilder.selectedBusinesses.has(biz) ? "active" : ""
-    }`;
-    item.dataset.biz = biz;
-    item.id = `templateBiz_${idx}`;
-    item.textContent = biz;
-    item.addEventListener("click", () => {
-      if (appState.templateBuilder.selectedBusinesses.has(biz)) {
-        appState.templateBuilder.selectedBusinesses.delete(biz);
-      } else {
-        appState.templateBuilder.selectedBusinesses.add(biz);
-      }
-      renderTemplateBusinessList();
-    });
-    root.appendChild(item);
-  });
-}
-
-function setAllTemplateBusinessChecked(checked) {
-  if (checked) {
-    appState.templateBuilder.selectedBusinesses = new Set(appState.templateBuilder.businesses || []);
-  } else {
-    appState.templateBuilder.selectedBusinesses = new Set();
-  }
-  renderTemplateBusinessList();
-}
-
-function getSelectedTemplateBusinesses() {
-  return Array.from(appState.templateBuilder.selectedBusinesses || []);
-}
-
-function renderNewBusinessList() {
-  const root = document.getElementById("templateNewBusinessList");
-  if (!root) return;
-  root.innerHTML = "";
-  const items = appState.templateBuilder.newBusinesses || [];
-  if (!items.length) {
-    root.innerHTML = "<span class='hint'>저장된 신규사업이 없습니다.</span>";
-    return;
-  }
-  items.forEach((item, idx) => {
-    const wrap = document.createElement("span");
-    wrap.className = "template-new-business-item";
-    wrap.textContent = `${item.dept || "미지정"} / ${item.name || ""}`;
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "template-new-business-remove";
-    del.textContent = "×";
-    del.addEventListener("click", () => {
-      appState.templateBuilder.newBusinesses.splice(idx, 1);
-      renderNewBusinessList();
-    });
-    wrap.appendChild(del);
-    root.appendChild(wrap);
-  });
-}
-
-async function loadTemplateOptions() {
-  const round = document.getElementById("templateRoundSelect")?.value || "";
-  const yearParam = appState.year ? `?year=${encodeURIComponent(appState.year)}` : "";
-  const roundParam = round ? `${yearParam ? "&" : "?"}round=${encodeURIComponent(round)}` : "";
-  const res = await fetch(`/api/template/options${yearParam}${roundParam}`);
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.message || "템플릿 옵션 로드 실패");
-  appState.templateBuilder.businesses = data.businesses || [];
-  appState.templateBuilder.selectedBusinesses = new Set();
-  appState.templateBuilder.departments = data.departments || [];
-  appState.templateBuilder.rounds = data.rounds || appState.templateBuilder.rounds || [];
-  const roundSelect = document.getElementById("templateRoundSelect");
-  if (roundSelect && !roundSelect.options.length) {
-    roundSelect.innerHTML = "";
-    appState.templateBuilder.rounds.forEach((r) => {
-      const opt = document.createElement("option");
-      opt.value = r;
-      opt.textContent = r;
-      roundSelect.appendChild(opt);
-    });
-    roundSelect.value = appState.budgetType === "supp" ? appState.data?.meta?.suppLabel || "1차추경" : "본예산";
-  }
-  const deptSelect = document.getElementById("templateDeptSelect");
-  if (deptSelect) {
-    deptSelect.innerHTML = "";
-    const depts = appState.templateBuilder.departments || [];
-    if (!depts.length) {
-      const opt = document.createElement("option");
-      opt.value = "사업총괄실";
-      opt.textContent = "사업총괄실";
-      deptSelect.appendChild(opt);
-    } else {
-      depts.forEach((d) => {
-        const opt = document.createElement("option");
-        opt.value = d;
-        opt.textContent = d;
-        deptSelect.appendChild(opt);
-      });
-    }
-  }
-  updateTemplateBuilderVisibility();
-  renderTemplateBusinessList();
-  renderNewBusinessList();
-}
-
-async function generateTemplateFromWeb() {
-  const round = document.getElementById("templateRoundSelect")?.value || "1차추경";
-  const dept = String(document.getElementById("templateDeptSelect")?.value || "").trim() || "통합";
-  const businesses = getSelectedTemplateBusinesses();
-  const newBusinesses = appState.templateBuilder.newBusinesses || [];
-  if (!businesses.length && !newBusinesses.length) {
-    throw new Error("기존사업을 선택하거나 신규사업을 1건 이상 저장하세요.");
-  }
-  const res = await fetch("/api/template/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      year: appState.year || "",
-      round,
-      dept,
-      businesses,
-      newBusinesses,
-    }),
-  });
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.message || "템플릿 생성 실패");
-  setText("templateGenerateResult", `생성 완료: ${data.outputPath || "-"}`);
-}
-
 function initControls() {
   const yearSelect = document.getElementById("yearSelect");
   const unitSelect = document.getElementById("unitSelect");
@@ -1839,53 +1416,6 @@ function initControls() {
   document.getElementById("filterGcode")?.addEventListener("change", (e) => {
     appState.filterGcode = e.target.value;
     renderAll();
-  });
-  document.getElementById("templateSelectAllBtn")?.addEventListener("click", () => {
-    setAllTemplateBusinessChecked(true);
-  });
-  document.getElementById("templateClearBtn")?.addEventListener("click", () => {
-    setAllTemplateBusinessChecked(false);
-  });
-  document.getElementById("templateBusinessSearchInput")?.addEventListener("input", renderTemplateBusinessList);
-  document.getElementById("templateRoundSelect")?.addEventListener("change", async () => {
-    try {
-      const round = document.getElementById("templateRoundSelect")?.value || "";
-      appState.budgetType = budgetTypeFromRound(round);
-      window.localStorage.setItem("budget_type", appState.budgetType);
-      const budgetTypeSelect = document.getElementById("budgetTypeSelect");
-      if (budgetTypeSelect) budgetTypeSelect.value = appState.budgetType;
-      updateTemplateBuilderVisibility();
-      await loadTemplateOptions();
-      renderAll();
-    } catch (err) {
-      setText("templateGenerateResult", String(err.message || "사업 목록 로드 실패"));
-    }
-  });
-  document.getElementById("templateAddNewBusinessBtn")?.addEventListener("click", () => {
-    const dept = String(document.getElementById("templateDeptSelect")?.value || "").trim();
-    const nameInput = document.getElementById("templateNewBusinessInput");
-    const name = String(nameInput?.value || "").trim();
-    if (!name) {
-      showToast("신규사업명을 입력하세요.", true);
-      return;
-    }
-    const exists = (appState.templateBuilder.newBusinesses || []).some((x) => x.name === name && x.dept === dept);
-    if (exists) {
-      showToast("이미 저장된 신규사업입니다.", true);
-      return;
-    }
-    appState.templateBuilder.newBusinesses.push({ dept, name });
-    if (nameInput) nameInput.value = "";
-    renderNewBusinessList();
-    showToast("신규사업이 저장되었습니다.");
-  });
-  document.getElementById("templateGenerateBtn")?.addEventListener("click", async () => {
-    try {
-      await generateTemplateFromWeb();
-      showToast("통합 템플릿 생성 완료");
-    } catch (err) {
-      showToast(String(err.message || "템플릿 생성 실패"), true);
-    }
   });
 }
 
@@ -1957,27 +1487,6 @@ async function loadDashboard() {
     fillSelect("filterGcode", data.filterOptions?.관항 || []);
 
     setText("subline", `최신 결과: ${data.latestFolder}`);
-    try {
-      const roundSelect = document.getElementById("templateRoundSelect");
-      if (roundSelect && !roundSelect.options.length) {
-        roundSelect.innerHTML = "";
-        const rounds = ["본예산", "1차추경", "2차추경", "3차추경", "4차추경", "5차추경", "최종추경"];
-        rounds.forEach((r) => {
-          const opt = document.createElement("option");
-          opt.value = r;
-          opt.textContent = r;
-          roundSelect.appendChild(opt);
-        });
-        roundSelect.value = appState.budgetType === "supp" ? data.meta?.suppLabel || "1차추경" : "본예산";
-      }
-      appState.budgetType = budgetTypeFromRound(roundSelect?.value || (data.meta?.hasSupp ? "1차추경" : "본예산"));
-      const budgetTypeSelect = document.getElementById("budgetTypeSelect");
-      if (budgetTypeSelect) budgetTypeSelect.value = appState.budgetType;
-      updateTemplateBuilderVisibility();
-      await loadTemplateOptions();
-    } catch (err) {
-      setText("templateGenerateResult", String(err.message || "템플릿 옵션 로드 실패"));
-    }
     await loadEntrusted();
     renderAll();
   } catch (e) {
@@ -2044,10 +1553,6 @@ document.getElementById("expenseFoundationSaveBtn")?.addEventListener("click", a
   } catch (e) {
     showToast(String(e.message || "세출 산출기초 저장 실패"), true);
   }
-});
-document.getElementById("expenseErrorFilterBtn")?.addEventListener("click", () => {
-  appState.expenseErrorOnly = !appState.expenseErrorOnly;
-  renderAll();
 });
 initTabs();
 initControls();

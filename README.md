@@ -59,6 +59,12 @@ python run.py --year 2026
 python web_server.py
 ```
 
+맥에서는 아래처럼 실행하면 됩니다.
+
+```bash
+python3 web_server.py
+```
+
 브라우저에서 아래 주소 접속:
 
 - `http://127.0.0.1:8787`
@@ -85,3 +91,9 @@ python web_server.py
 주의:
 - 동일 폴더에 Git 외 동기화 도구를 함께 쓰면 `sync-conflict` 파일이 생길 수 있습니다.
 - 가능하면 코드/결과 동기화는 Git만 사용하세요.
+
+## 맥 개발 적용 내용
+
+- 하드코딩된 `Desktop/2026 예산` 경로 대신 자동 경로 탐색을 사용합니다.
+- 우선순위: `budget_tool` 기준 상위 폴더 -> `budget_tool` 폴더 -> `~/Desktop/2026 예산` -> `~/Documents/2026 예산`
+- 따라서 윈도우/맥 모두에서 같은 코드로 실행 가능합니다.

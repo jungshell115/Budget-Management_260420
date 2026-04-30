@@ -3,8 +3,6 @@ from __future__ import annotations
 import csv
 import json
 import re
-import subprocess
-import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -17,17 +15,6 @@ BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 OUTPUT_DIR = BASE_DIR / "output"
 EDIT_DIR = BASE_DIR / "web_edits"
-
-
-def _workspace_roots() -> list[Path]:
-    home = Path.home()
-    roots: list[Path] = [BASE_DIR.parent, BASE_DIR]
-    for candidate in (home / "Desktop" / "2026 예산", home / "Documents" / "2026 예산"):
-        if candidate not in roots:
-            roots.append(candidate)
-    return roots
-
-
 CITY_KEYS = [
     "천안",
     "아산",
@@ -47,29 +34,10 @@ CITY_KEYS = [
 ]
 ENTRUSTED_KEYS = ["국비", "도비", *CITY_KEYS]
 EXPENSE_REF_CSV_CANDIDATES = [
+    Path.home() / "Desktop" / "2026 예산" / "★2026년 본예산_세출예산명세.csv",
     BASE_DIR.parent / "★2026년 본예산_세출예산명세.csv",
     BASE_DIR / "★2026년 본예산_세출예산명세.csv",
 ]
-for _root in _workspace_roots():
-    _candidate = _root / "★2026년 본예산_세출예산명세.csv"
-    if _candidate not in EXPENSE_REF_CSV_CANDIDATES:
-        EXPENSE_REF_CSV_CANDIDATES.append(_candidate)
-
-EXPENSE_TEMPLATE_CSV_CANDIDATES = [
-    BASE_DIR.parent / "세출예산명세_파싱템플릿.xlsx",
-    BASE_DIR.parent / "세출예산명세_파싱템플릿.csv",
-    BASE_DIR / "세출예산명세_파싱템플릿.xlsx",
-    BASE_DIR / "세출예산명세_파싱템플릿.csv",
-]
-for _root in _workspace_roots():
-    for _path in (
-        _root / "시스템" / "2026" / "2026_본예산_세출예산명세_파싱템플릿.xlsx",
-        _root / "시스템" / "2026" / "2026_본예산_세출예산명세_파싱템플릿.csv",
-        _root / "세출예산명세_파싱템플릿.xlsx",
-        _root / "세출예산명세_파싱템플릿.csv",
-    ):
-        if _path not in EXPENSE_TEMPLATE_CSV_CANDIDATES:
-            EXPENSE_TEMPLATE_CSV_CANDIDATES.append(_path)
 
 
 def to_int(value: str) -> int:
@@ -188,24 +156,6 @@ def snapshot_business_order(rows: list[dict[str, str]]) -> list[str]:
     return order
 
 
-def merge_business_order(base_order: list[str], supp_order: list[str]) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    for biz in base_order:
-        name = str(biz or "").strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        merged.append(name)
-    for biz in supp_order:
-        name = str(biz or "").strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        merged.append(name)
-    return merged
-
-
 def _scan_numeric_cells(cells: list[str], start_idx: int, need: int = 3) -> list[int]:
     nums: list[int] = []
     for i in range(start_idx, len(cells)):
@@ -237,11 +187,6 @@ def load_expense_reference_details(valid_business_names: set[str]) -> dict[str, 
     ★2026년 본예산_세출예산명세 CSV에서 사업별 세목 상세를 읽는다.
     출력: {사업명: [{"code","label","current","prior","diff","foundation"}...]}
     """
-    template_csv = _first_existing_path(EXPENSE_TEMPLATE_CSV_CANDIDATES)
-    if template_csv is not None:
-        # 템플릿이 존재하면 템플릿만 사용한다(참고 CSV fallback 비활성).
-        return load_expense_reference_details_from_template(template_csv, valid_business_names)
-
     ref_csv = _first_existing_path(EXPENSE_REF_CSV_CANDIDATES)
     if ref_csv is None:
         return {}
@@ -296,40 +241,30 @@ def load_expense_reference_details(valid_business_names: set[str]) -> dict[str, 
             flush_entry()
             current_business = biz_candidate
 
-        code_match: tuple[str, str] | None = None
-        code_idx = -1
-        # 2026 세출명세 구조: [관, 항, 세항, 목, (분리열), 세목]
-        # 새로 분리된 열을 우선 반영하기 위해 6 -> 5 -> 4 순으로 코드 추출한다.
-        for idx in (6, 5, 4):
-            if idx >= len(cells):
-                continue
-            cell = cells[idx]
+        semok_match: tuple[str, str] | None = None
+        semok_idx = -1
+        for i, cell in enumerate(cells):
             m = re.match(r"^(\d{3}-\d{2})\s+(.+)$", cell)
             if m:
-                code_match = (m.group(1), m.group(2).strip())
-                code_idx = idx
+                semok_match = (m.group(1), m.group(2).strip())
+                semok_idx = i
                 break
-            m3 = re.match(r"^(\d{3})\s+(.+)$", cell)
-            if m3:
-                code_match = (m3.group(1), m3.group(2).strip())
-                code_idx = idx
-                break
-        if code_match and current_business:
+        if semok_match and current_business:
             flush_entry()
-            current, prior, diff = _thousand_to_won_amounts(_scan_numeric_cells(cells, code_idx + 1, 3))
+            current, prior, diff = _thousand_to_won_amounts(_scan_numeric_cells(cells, semok_idx + 1, 3))
             foundation_parts: list[str] = []
-            for c in cells[code_idx + 1 :]:
+            for c in cells[semok_idx + 1 :]:
                 if not c:
                     continue
                 if c in {"원", "명", "회", "식", "년", "월", "X", "=", ":"}:
                     continue
-                if re.match(r"^-?[\d,]+$", c):
+                if re.match(r"^[\d,]+$", c):
                     continue
                 foundation_parts.append(c)
                 break
             current_entry = {
-                "code": code_match[0],
-                "label": code_match[1],
+                "code": semok_match[0],
+                "label": semok_match[1],
                 "current": current,
                 "prior": prior,
                 "diff": diff,
@@ -352,155 +287,6 @@ def load_expense_reference_details(valid_business_names: set[str]) -> dict[str, 
                 current_entry["foundation"] = bullet if not old else f"{old}\n{bullet}"
 
     flush_entry()
-    return data
-
-
-def load_expense_reference_details_from_template(path: Path, valid_business_names: set[str]) -> dict[str, list[dict[str, str | int]]]:
-    data: dict[str, list[dict[str, str | int]]] = {}
-    entries: dict[tuple[str, str], dict[str, str | int]] = {}
-    code_catalog = load_expense_code_catalog()
-    triple_name_map = code_catalog.get("triple", {})
-    semok_name_map = code_catalog.get("semok", {})
-
-    def _code_sort_key(code: str) -> tuple[int, int]:
-        t = str(code or "").strip()
-        m = re.match(r"^(\d{3})(?:-(\d{2}))?$", t)
-        if not m:
-            return (999, 999)
-        return (int(m.group(1)), int(m.group(2) or 0))
-
-    def _factor_or_one(raw: str) -> int:
-        val = to_int(str(raw or ""))
-        return val if val > 0 else 1
-
-    def _build_expr(base_won: int, q1: int, u1: str, q2: int, u2: str, q3: int, u3: str) -> str:
-        factors = [f"{base_won:,}원"]
-        total = base_won
-        if q1 > 0:
-            factors.append(f"{q1:,}{u1}")
-            total *= q1
-        if q2 > 0:
-            factors.append(f"{q2:,}{u2}")
-            total *= q2
-        if q3 > 0:
-            factors.append(f"{q3:,}{u3}")
-            total *= q3
-        return f"{' X '.join(factors)} = {total:,}원"
-
-    def _read_template_rows(template_path: Path) -> list[dict[str, str]]:
-        ext = template_path.suffix.lower()
-        if ext == ".xlsx":
-            try:
-                from openpyxl import load_workbook
-            except Exception:
-                return []
-            try:
-                wb = load_workbook(template_path, data_only=True)
-            except OSError:
-                return []
-            ws = wb.active
-            values = list(ws.values)
-            if not values:
-                return []
-            headers = [str(v or "").strip() for v in values[0]]
-            out_rows: list[dict[str, str]] = []
-            for row_vals in values[1:]:
-                row_map: dict[str, str] = {}
-                for i, h in enumerate(headers):
-                    if not h:
-                        continue
-                    cell_val = row_vals[i] if i < len(row_vals) else ""
-                    row_map[h] = "" if cell_val is None else str(cell_val)
-                out_rows.append(row_map)
-            return out_rows
-        rows_local: list[dict[str, str]] = []
-        for enc in ("utf-8-sig", "cp949"):
-            try:
-                with template_path.open("r", encoding=enc, newline="") as f:
-                    rows_local = list(csv.DictReader(f))
-                break
-            except UnicodeDecodeError:
-                rows_local = []
-                continue
-            except OSError:
-                return []
-        return rows_local
-
-    rows: list[dict[str, str]] = _read_template_rows(path)
-    if not rows:
-        return {}
-
-    for row in rows:
-        biz = str(row.get("사업명", "") or "").strip()
-        if not biz or biz not in valid_business_names:
-            continue
-        code = str(row.get("세목코드", "") or row.get("목코드", "") or "").strip()
-        if not code:
-            continue
-        key = (biz, code)
-        current = to_int(str(row.get("현재예산(원)", "0")))
-        prior = to_int(str(row.get("기정예산(원)", "0")))
-        summary = str(row.get("요약라벨", "") or "").strip()
-        detail_name = str(row.get("내역명", "") or "").strip()
-        base_won = to_int(str(row.get("기초금액(원)", "0")))
-        q1 = to_int(str(row.get("수량1", "0")))
-        u1 = str(row.get("단위1", "") or "").strip()
-        q2 = to_int(str(row.get("수량2", "0")))
-        u2 = str(row.get("단위2", "") or "").strip()
-        q3 = to_int(str(row.get("수량3", "0")))
-        u3 = str(row.get("단위3", "") or "").strip()
-        if current <= 0 and base_won > 0:
-            current = base_won * _factor_or_one(row.get("수량1", "")) * _factor_or_one(row.get("수량2", "")) * _factor_or_one(row.get("수량3", ""))
-
-        label_text = str(row.get("세목명", "") or row.get("목명", "") or "").strip()
-        if not label_text:
-            if "-" in code:
-                label_text = semok_name_map.get(code, "")
-            else:
-                label_text = triple_name_map.get(code, "")
-
-        if key not in entries:
-            entries[key] = {
-                "code": code,
-                "label": label_text,
-                "current": 0,
-                "prior": 0,
-                "_summary_current": 0,
-                "_summary_prior": 0,
-                "_detail_current": 0,
-                "_detail_prior": 0,
-                "diff": 0,
-                "foundation": summary or ("소계" if "-" in code else "합계"),
-            }
-        ent = entries[key]
-        is_detail = bool(detail_name)
-        if is_detail:
-            if current > 0:
-                ent["_detail_current"] = int(ent["_detail_current"]) + current
-            if prior > 0:
-                ent["_detail_prior"] = int(ent["_detail_prior"]) + prior
-        else:
-            if current > 0:
-                ent["_summary_current"] = max(int(ent["_summary_current"]), current)
-            if prior > 0:
-                ent["_summary_prior"] = max(int(ent["_summary_prior"]), prior)
-
-        if summary:
-            ent["foundation"] = summary
-        if detail_name and base_won > 0:
-            bullet = f"○ {detail_name} : {_build_expr(base_won, q1, u1, q2, u2, q3, u3)}"
-            old = str(ent.get("foundation", "") or "").strip()
-            ent["foundation"] = bullet if not old else f"{old}\n{bullet}"
-
-    for (biz, _), entry in sorted(entries.items(), key=lambda kv: (kv[0][0], _code_sort_key(kv[0][1]))):
-        sum_cur = int(entry.pop("_summary_current", 0))
-        sum_pre = int(entry.pop("_summary_prior", 0))
-        det_cur = int(entry.pop("_detail_current", 0))
-        det_pre = int(entry.pop("_detail_prior", 0))
-        entry["current"] = sum_cur if sum_cur > 0 else det_cur
-        entry["prior"] = sum_pre if sum_pre > 0 else det_pre
-        entry["diff"] = int(entry["current"]) - int(entry["prior"])
-        data.setdefault(biz, []).append(entry)
     return data
 
 
@@ -1023,8 +809,7 @@ def load_dashboard_payload(selected_year: str | None = None) -> dict:
 
     expense_code_catalog = load_expense_code_catalog()
     business_order_base = snapshot_business_order(base_snapshot_rows)
-    business_order_supp_raw = snapshot_business_order(supp_snapshot_rows)
-    business_order_supp = merge_business_order(business_order_base, business_order_supp_raw)
+    business_order_supp = snapshot_business_order(supp_snapshot_rows)
     expense_reference_base = load_expense_reference_details(set(business_order_base))
 
     return {
@@ -1113,100 +898,6 @@ def save_edit(payload: dict) -> tuple[bool, str]:
     return True, "저장되었습니다."
 
 
-def load_template_builder_options(selected_year: str | None = None, selected_round: str | None = None) -> dict:
-    latest, _years, _selected = select_output_dir(selected_year)
-    if latest is None:
-        return {"ok": False, "message": "output 폴더가 없습니다.", "businesses": [], "rounds": []}
-    base_snapshot_rows = read_csv(latest / "본예산_기초_파싱표.csv")
-    supp_snapshot_rows = read_csv(latest / "추경_기초_파싱표.csv")
-    base_order = snapshot_business_order(base_snapshot_rows)
-    supp_order = snapshot_business_order(supp_snapshot_rows)
-    dept_rows = supp_snapshot_rows or base_snapshot_rows
-    departments: list[str] = []
-    seen_dept: set[str] = set()
-    for row in dept_rows:
-        dept = str(row.get("부서", "") or "").strip()
-        if not dept or dept in seen_dept:
-            continue
-        seen_dept.add(dept)
-        departments.append(dept)
-
-    def _tail_last(items: list[str]) -> list[str]:
-        normal: list[str] = []
-        tail: list[str] = []
-        for name in items:
-            text = str(name or "").strip()
-            if not text:
-                continue
-            if ("반환금" in text) or ("예비비" in text):
-                tail.append(text)
-            else:
-                normal.append(text)
-        return normal + tail
-
-    round_label = str(selected_round or "").strip()
-    if round_label == "본예산":
-        # 본예산은 '직전 회차 사업' 개념이 없으므로 선택 목록을 노출하지 않는다.
-        merged = []
-    elif round_label == "1차추경":
-        # 1차추경 대상은 직전 회차(본예산) 사업
-        merged = base_order
-    elif round_label in {"2차추경", "3차추경", "4차추경", "5차추경", "최종추경"}:
-        # n차추경 대상은 직전 회차 누적(본예산 + 직전 추경 반영 사업)
-        merged = merge_business_order(base_order, supp_order)
-    else:
-        merged = base_order
-    merged = _tail_last(merged)
-    rounds = ["본예산", "1차추경", "2차추경", "3차추경", "4차추경", "5차추경", "최종추경"]
-    return {"ok": True, "businesses": merged, "rounds": rounds, "departments": departments, "latestFolder": latest.name}
-
-
-def generate_integrated_template(payload: dict) -> tuple[bool, str, str]:
-    round_label = str(payload.get("round", "1차추경") or "1차추경").strip()
-    year = str(payload.get("year", "") or "").strip()
-    dept = str(payload.get("dept", "통합") or "통합").strip()
-    businesses = payload.get("businesses") or []
-    new_businesses = payload.get("newBusinesses") or []
-    if not isinstance(businesses, list):
-        businesses = []
-    if not isinstance(new_businesses, list):
-        new_businesses = []
-    normalized_new_names: list[str] = []
-    for item in new_businesses:
-        if isinstance(item, dict):
-            name = str(item.get("name", "") or "").strip()
-        else:
-            name = str(item or "").strip()
-        if name:
-            normalized_new_names.append(name)
-    script = BASE_DIR / "scripts_make_integrated_template.py"
-    if not script.exists():
-        return False, "템플릿 생성 스크립트를 찾을 수 없습니다.", ""
-    cmd = [
-        sys.executable,
-        str(script),
-        "--year",
-        year or "2026",
-        "--round",
-        round_label,
-        "--dept",
-        dept,
-        "--businesses",
-        ",".join([str(x).strip() for x in businesses if str(x).strip()]),
-        "--new-businesses",
-        ",".join(normalized_new_names),
-    ]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=120)
-    except Exception as exc:
-        return False, f"템플릿 생성 중 오류: {exc}", ""
-    if proc.returncode != 0:
-        msg = (proc.stderr or proc.stdout or "템플릿 생성 실패").strip()
-        return False, msg, ""
-    out_path = (proc.stdout or "").strip().splitlines()[-1].strip() if (proc.stdout or "").strip() else ""
-    return True, "템플릿이 생성되었습니다.", out_path
-
-
 class BudgetHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
@@ -1236,23 +927,11 @@ class BudgetHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if parsed.path == "/api/template/options":
-            query = parse_qs(parsed.query)
-            year = (query.get("year") or [""])[0].strip() or None
-            round_label = (query.get("round") or [""])[0].strip() or None
-            payload = load_template_builder_options(year, round_label)
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self.send_response(200 if payload.get("ok") else 400)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
         return super().do_GET()
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path not in {"/api/edit", "/api/entrusted/save", "/api/template/generate"}:
+        if parsed.path not in {"/api/edit", "/api/entrusted/save"}:
             self.send_response(404)
             self.end_headers()
             return
@@ -1264,14 +943,9 @@ class BudgetHandler(SimpleHTTPRequestHandler):
             payload = {}
         if parsed.path == "/api/entrusted/save":
             ok, message = save_entrusted_entry(payload)
-            extra = {}
-        elif parsed.path == "/api/template/generate":
-            ok, message, output_path = generate_integrated_template(payload)
-            extra = {"outputPath": output_path}
         else:
             ok, message = save_edit(payload)
-            extra = {}
-        res = json.dumps({"ok": ok, "message": message, **extra}, ensure_ascii=False).encode("utf-8")
+        res = json.dumps({"ok": ok, "message": message}, ensure_ascii=False).encode("utf-8")
         self.send_response(200 if ok else 400)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(res)))
